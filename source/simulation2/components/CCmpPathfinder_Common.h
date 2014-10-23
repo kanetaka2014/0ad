@@ -294,6 +294,8 @@ public:
 	
 	std::map<pass_class_t, shared_ptr<JumpPointCache> > m_JumpPointCache; // for JPS pathfinder
 
+	Grid<NavcellData> master_Grid;
+
 	// Interface to the hierarchical pathfinder.
 	// (This is hidden behind proxy methods to keep the code
 	// slightly better encapsulated.)
