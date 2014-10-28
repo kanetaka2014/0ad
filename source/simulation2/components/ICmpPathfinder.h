@@ -179,6 +179,11 @@ public:
 	virtual void ProcessSameTurnMoves() = 0;
 
 	/**
+	 * Regenerates the grid based on the current obstruction list, if necessary
+	 */
+	virtual void UpdateGrid() = 0;
+
+	/**
 	 * Returns some stats about the last ComputePath.
 	 */
 	virtual void GetDebugData(u32& steps, double& time, Grid<u8>& grid) = 0;

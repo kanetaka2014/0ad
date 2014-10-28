@@ -490,7 +490,10 @@ void CSimulation2Impl::UpdateComponents(CSimContext& simContext, fixed turnLengt
 
 	// Process newly generated move commands so the UI feels snappy
 	if (cmpPathfinder)
+	{
+		cmpPathfinder->UpdateGrid();
 		cmpPathfinder->ProcessSameTurnMoves();
+	}
 
 	// Send all the update phases
 	{

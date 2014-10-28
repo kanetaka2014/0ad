@@ -440,7 +440,7 @@ public:
 	/**
 	 * Regenerates the grid based on the current obstruction list, if necessary
 	 */
-	void UpdateGrid();
+	virtual void UpdateGrid();
 
 	Grid<u16> ComputeShoreGrid();
 
