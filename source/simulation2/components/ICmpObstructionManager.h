@@ -233,6 +233,11 @@ public:
 		TILE_OUTOFBOUNDS = (1 << 2) // set if this tile is outside the world boundaries
 	};
 
+	// for partial update
+	virtual void SetMaxClearance(int max) = 0;
+	virtual int GetMaxClearance() = 0;
+	virtual void ObstructionDirtyReset() = 0;
+	virtual void GetDirtyRange(Grid<u16>& grid, int& i0, int& j0, int& i1, int& j1) = 0;
 	/**
 	 * Convert the current set of shapes onto a navcell grid.
 	 * Shapes are expanded by the clearance radius @p expand.

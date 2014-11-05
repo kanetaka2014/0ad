@@ -551,6 +551,8 @@ void CCmpPathfinder::UpdateGrid()
 				}
 			}
 
+			int max = 0; // for update range margin
+
 			// Expand the impassability grid, for any class with non-zero clearance,
 			// so that we can stop units getting too close to impassable navcells
 			for (size_t n = 0; n < m_PassClasses.size(); ++n)
@@ -561,15 +563,43 @@ void CCmpPathfinder::UpdateGrid()
 					// only bother doing this once for them all
 					int clearance = (m_PassClasses[n].m_Clearance / ICmpObstructionManager::NAVCELL_SIZE).ToInt_RoundToInfinity();
 					if (clearance > 0)
+					{
 						ExpandImpassableCells(*m_Grid, clearance, m_PassClasses[n].m_Mask);
+						if (clearance > max)
+							max = clearance;
+					}
 				}
 			}
+			cmpObstructionManager->SetMaxClearance(max);
 
 			// make master grid
 			master_Grid = *m_Grid;
 		}
 		else //copy from master instead of make from scratch
-			memcpy(m_Grid->m_Data, master_Grid.m_Data, m_Grid->m_W * m_Grid->m_H * sizeof(NavcellData));
+		{
+			int i0, j0, i1, j1;
+
+			if (obstructionsDirty)
+			{
+				int clr = cmpObstructionManager->GetMaxClearance();
+				cmpObstructionManager->GetDirtyRange(*m_Grid, i0, j0, i1, j1);
+				//i0 = std::max(0, i0 - clr);
+				//j0 = std::max(0, j0 - clr);
+				//i1 = std::min(i1 + clr, m_Grid->m_W - 1);
+				//j1 = std::min(j1 + clr, m_Grid->m_H - 1);
+			}
+
+			if (i0 == 0 && j0 == 0 && i1 == m_Grid->m_W - 1 && j1 == m_Grid->m_H - 1)
+				memcpy(m_Grid->m_Data, master_Grid.m_Data, m_Grid->m_W * m_Grid->m_H * sizeof(NavcellData));
+			else
+			{
+				for (int i = i0; i <= i1; ++i)
+				{
+					for (int j = j0; j <= j1; ++j)
+						m_Grid->set(i, j, master_Grid.get(i, j));
+				}
+			}
+		}
 
 		// Add obstructions onto the grid, for any class with (possibly zero) clearance
 		for (size_t n = 0; n < m_PassClasses.size(); ++n)
@@ -579,6 +609,8 @@ void CCmpPathfinder::UpdateGrid()
 			if (m_PassClasses[n].m_HasClearance)
 				cmpObstructionManager->Rasterize(*m_Grid, m_PassClasses[n].m_Clearance, ICmpObstructionManager::FLAG_BLOCK_PATHFINDING, m_PassClasses[n].m_Mask);
 		}
+
+		cmpObstructionManager->ObstructionDirtyReset();
 
 		m_TerrainDirty = false;
 		++m_Grid->m_DirtyID;
