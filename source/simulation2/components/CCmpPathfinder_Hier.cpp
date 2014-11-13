@@ -28,6 +28,8 @@
 	#include "lib/timer.h"
 	TIMER_ADD_CLIENT(tc_MakeGoalReachable);
 	TIMER_ADD_CLIENT(tc_InitRegions);
+	TIMER_ADD_CLIENT(tc_FindNearestNavcellInRegions);
+	TIMER_ADD_CLIENT(tc_FindReachableRegions);
 #else
 	#undef	TIMER_ACCRUE
 	#define	TIMER_ACCRUE(a) ;
@@ -695,6 +697,7 @@ void CCmpPathfinder_Hier::FindNearestNavcellInRegions(const std::set<RegionID>& 
 	// * Sort regions by that underestimated distance
 	// * For each region, find the actual nearest navcell
 	// * Stop when the underestimated distances are worse than the best real distance
+	TIMER_ACCRUE(tc_FindNearestNavcellInRegions);
 
 	std::vector<std::pair<u32, RegionID> > regionDistEsts; // pair of (distance^2, region)
 
@@ -749,6 +752,8 @@ void CCmpPathfinder_Hier::FindReachableRegions(RegionID from, std::set<RegionID>
 {
 	// Flood-fill the region graph, starting at 'from',
 	// collecting all the regions that are reachable via edges
+
+	TIMER_ACCRUE(tc_FindReachableRegions);
 
 	std::vector<RegionID> open;
 	open.push_back(from);
