@@ -1017,7 +1017,7 @@ void CCmpPathfinder::ComputePathJPS(entity_pos_t x0, entity_pos_t z0, const Path
 	}
 
 	//NormalizePathWaypoints(path);
-	ImprovePathWaypoints(path, passClass);
+	//ImprovePathWaypoints(path, passClass);
 	
 	// Save this grid for debug display
 	delete m_DebugGridJPS;
