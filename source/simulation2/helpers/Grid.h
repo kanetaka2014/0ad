@@ -80,16 +80,6 @@ public:
 	{
 		if (m_Data)
 			memset(m_Data, 0, m_W*m_H*sizeof(T));
-	
-	}
-
-	// Reset all tiles i0 <= i <= i1, j0 <= j <= j1
-	void reset(int i0, int j0, int i1, int j1)
-	{
-		ENSURE(0 <= i0 && i0 < m_W && 0 <= i1 && i1 < m_W && 0 <= j0 && j0 < m_H && 0 <= j1 && j1 < m_H);
-		for (int j = j0; j <= j1; ++j)
-			for (int i = i0; i <= i1; ++i)
-				m_Data[j*m_W + i] = 0;
 	}
 
 	// Add two grids of the same size
