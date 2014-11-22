@@ -636,7 +636,7 @@ static bool HasJumpedVert(int i, int j, int dj, PathfinderStateJPS& state)
 
 // Find the jump points by scanning along the map:
 
-static void AddJumpedHoriz(int i, int j, int di, PathCost g, PathfinderStateJPS& state)
+static void AddJumpedHoriz(int i, int j, int di, PathCost g, PathfinderStateJPS& state, bool DetectGoal)
 {
 	ASSERT(di == 1 || di == -1);
 	int ni = i + di;
@@ -645,7 +645,7 @@ static void AddJumpedHoriz(int i, int j, int di, PathCost g, PathfinderStateJPS&
 		if (!PASSABLE(ni, j))
 			break;
 
-		if (state.goal.NavcellContainsGoal(ni, j) || // XXX
+		if ((DetectGoal && state.goal.NavcellContainsGoal(ni, j)) || // XXX
 #if ACCEPT_DIAGONAL_GAPS
 			(!PASSABLE(ni, j-1) && PASSABLE(ni+di, j-1)) ||
 			(!PASSABLE(ni, j+1) && PASSABLE(ni+di, j+1)))
@@ -663,7 +663,7 @@ static void AddJumpedHoriz(int i, int j, int di, PathCost g, PathfinderStateJPS&
 }
 
 //if found JP or goal, returns ni, else returns 0.
-static int HasJumpedHoriz(int i, int j, int di, PathfinderStateJPS& state)
+static int HasJumpedHoriz(int i, int j, int di, PathfinderStateJPS& state, bool DetectGoal)
 {
 	ASSERT(di == 1 || di == -1);
 	int ni = i + di;
@@ -672,7 +672,7 @@ static int HasJumpedHoriz(int i, int j, int di, PathfinderStateJPS& state)
 		if (!PASSABLE(ni, j))
 			return 0;
 
-		if (state.goal.NavcellContainsGoal(ni, j) || // XXX
+		if ((DetectGoal && state.goal.NavcellContainsGoal(ni, j)) || // XXX
 #if ACCEPT_DIAGONAL_GAPS
 			(!PASSABLE(ni, j-1) && PASSABLE(ni+di, j-1)) ||
 			(!PASSABLE(ni, j+1) && PASSABLE(ni+di, j+1)))
@@ -688,7 +688,7 @@ static int HasJumpedHoriz(int i, int j, int di, PathfinderStateJPS& state)
 	}
 }
 
-static void AddJumpedVert(int i, int j, int dj, PathCost g, PathfinderStateJPS& state)
+static void AddJumpedVert(int i, int j, int dj, PathCost g, PathfinderStateJPS& state, bool DetectGoal)
 {
 	ASSERT(dj == 1 || dj == -1);
 	int nj = j + dj;
@@ -697,7 +697,7 @@ static void AddJumpedVert(int i, int j, int dj, PathCost g, PathfinderStateJPS& 
 		if (!PASSABLE(i, nj))
 			break;
 
-		if (state.goal.NavcellContainsGoal(i, nj) || // XXX
+		if ((DetectGoal && state.goal.NavcellContainsGoal(i, nj)) || // XXX
 #if ACCEPT_DIAGONAL_GAPS
 			(!PASSABLE(i-1, nj) && PASSABLE(i-1, nj+dj)) ||
 			(!PASSABLE(i+1, nj) && PASSABLE(i+1, nj+dj)))
@@ -714,8 +714,69 @@ static void AddJumpedVert(int i, int j, int dj, PathCost g, PathfinderStateJPS& 
 	}
 }
 
+// detect the scan could reach the goal
+// AddJumped.../HasJumped... functions scan navcells toward one direction. So the posibility of goal-hit is deterministic.
+// return true if the scan could reach the goal, false if the scan never reach the goal.
+bool OnTheWay(int i, int j, int di, int dj, const PathGoal& goal)
+{
+	entity_pos_t  hw, hh; //harf width/hight of goal bounding box
+
+	if (goal.type == PathGoal::POINT)
+	{
+		hw = fixed::Zero();
+		hh = fixed::Zero();
+	}
+	else if (goal.type == PathGoal::CIRCLE || goal.type == PathGoal::INVERTED_CIRCLE)
+	{
+		hw = goal.hw;
+		hh = goal.hw;
+	}
+	else if (goal.type == PathGoal::SQUARE || goal.type == PathGoal::INVERTED_SQUARE)
+	{
+		CFixedVector2D hbb = Geometry::GetHalfBoundingBox(goal.u, goal.v, CFixedVector2D(goal.hw, goal.hh));
+		hw = hbb.X.Absolute();
+		hh = hbb.Y.Absolute();
+	}
+	else //invalid
+	{
+		abort();
+		hw = fixed::Zero();
+		hh = fixed::Zero();
+	}
+
+	const int sft = ICmpObstructionManager::NAVCELL_SIZE_LOG2;
+
+	if (dj != 0)
+	{
+		int gj = ((goal.z + (dj > 0 ? hh : -hh)) >> sft).ToInt_RoundToNegInfinity();
+		if ((gj - j)*dj < 0) //move backward to near side of bounding box
+			return false;
+	}
+	else
+	{
+		if (j < ((goal.z - hh) >> sft).ToInt_RoundToNegInfinity() ||
+			j > ((goal.z + hh) >> sft).ToInt_RoundToNegInfinity())
+			return false;
+	}
+
+	if (di != 0)
+	{
+		int gi = ((goal.x + (di > 0 ? hw : -hw)) >> sft).ToInt_RoundToNegInfinity();
+		if ((gi - i)*di < 0) //move backward to near side of bounding box
+			return false;
+	}
+	else
+	{
+		if (i < ((goal.x - hw) >> sft).ToInt_RoundToNegInfinity() ||
+			i > ((goal.x + hh) >> sft).ToInt_RoundToNegInfinity())
+			return false;
+	}
+
+	return true;
+}
+
 //if found JP or goal, returns nj, else returns 0.
-static int HasJumpedVert(int i, int j, int dj, PathfinderStateJPS& state)
+static int HasJumpedVert(int i, int j, int dj, PathfinderStateJPS& state, bool DetectGoal)
 {
 	ASSERT(dj == 1 || dj == -1);
 	int nj = j + dj;
@@ -724,7 +785,7 @@ static int HasJumpedVert(int i, int j, int dj, PathfinderStateJPS& state)
 		if (!PASSABLE(i, nj))
 			return 0;
 
-		if (state.goal.NavcellContainsGoal(i, nj) || // XXX
+		if ((DetectGoal && state.goal.NavcellContainsGoal(i, nj)) || // XXX
 #if ACCEPT_DIAGONAL_GAPS
 			(!PASSABLE(i-1, nj) && PASSABLE(i-1, nj+dj)) ||
 			(!PASSABLE(i+1, nj) && PASSABLE(i+1, nj+dj)))
@@ -757,6 +818,7 @@ static void AddJumpedDiag(int i, int j, int di, int dj, PathCost g, PathfinderSt
 
 	int ni = i + di;
 	int nj = j + dj;
+	bool DetectGoal = OnTheWay(ni, nj, di, dj, state.goal);
 	while (true)
 	{
 		// Stop if we hit an obstructed cell
@@ -771,7 +833,7 @@ static void AddJumpedDiag(int i, int j, int di, int dj, PathCost g, PathfinderSt
 #endif
 
 		// Process this cell if it's at the goal
-		if (state.goal.NavcellContainsGoal(ni, nj))
+		if (DetectGoal && state.goal.NavcellContainsGoal(ni, nj))
 		{
 			ProcessNeighbour(i, j, ni, nj, g, state);
 			return;
@@ -785,8 +847,8 @@ static void AddJumpedDiag(int i, int j, int di, int dj, PathCost g, PathfinderSt
 			return;
 		}
 #endif
-		int fi = HasJumpedHoriz(ni, nj, di, state);
-		int fj = HasJumpedVert(ni, nj, dj, state);
+		int fi = HasJumpedHoriz(ni, nj, di, state, DetectGoal ? OnTheWay(ni, nj, di, 0, state.goal) : false);
+		int fj = HasJumpedVert(ni, nj, dj, state, DetectGoal ? OnTheWay(ni, nj, 0, dj, state.goal) : false);
 		if (fi || fj)
 		{
 			ProcessNeighbour(i, j, ni, nj, g, state);
@@ -919,15 +981,15 @@ void CCmpPathfinder::ComputePathJPS(entity_pos_t x0, entity_pos_t z0, const Path
 			if (!IS_PASSABLE(state.terrain->get(i + dpi, j-1), state.passClass))
 			{
 				AddJumpedDiag(i, j, -dpi, -1, g, state);
-				AddJumpedVert(i, j, -1, g, state);
+				AddJumpedVert(i, j, -1, g, state, OnTheWay(i, j, 0, -1, state.goal));
 			}
 			if (!IS_PASSABLE(state.terrain->get(i + dpi, j+1), state.passClass))
 			{
 				AddJumpedDiag(i, j, -dpi, +1, g, state);
-				AddJumpedVert(i, j, +1, g, state);
+				AddJumpedVert(i, j, +1, g, state, OnTheWay(i, j, 0, +1, state.goal));
 			}
 #endif
-			AddJumpedHoriz(i, j, -dpi, g, state);
+			AddJumpedHoriz(i, j, -dpi, g, state, OnTheWay(i, j, -dpi, 0, state.goal));
 		}
 		else if (dpi == 0 && dpj != 0)
 		{
@@ -941,15 +1003,15 @@ void CCmpPathfinder::ComputePathJPS(entity_pos_t x0, entity_pos_t z0, const Path
 			if (!IS_PASSABLE(state.terrain->get(i-1, j + dpj), state.passClass))
 			{
 				AddJumpedDiag(i, j, -1, -dpj, g, state);
-				AddJumpedHoriz(i, j, -1, g, state);
+				AddJumpedHoriz(i, j, -1, g, state, OnTheWay(i, j, -1, 0, state.goal));
 			}
 			if (!IS_PASSABLE(state.terrain->get(i+1, j + dpj), state.passClass))
 			{
 				AddJumpedDiag(i, j, +1, -dpj, g, state);
-				AddJumpedHoriz(i, j, +1, g, state);
+				AddJumpedHoriz(i, j, +1, g, state, OnTheWay(i, j, 1, 0, state.goal));
 			}
 #endif
-			AddJumpedVert(i, j, -dpj, g, state);
+			AddJumpedVert(i, j, -dpj, g, state, OnTheWay(i, j, 0, -dpj, state.goal));
 		}
 		else if (dpi != 0 && dpj != 0)
 		{
@@ -978,7 +1040,7 @@ void CCmpPathfinder::ComputePathJPS(entity_pos_t x0, entity_pos_t z0, const Path
 
 			if (passl)
 			{
-				AddJumpedHoriz(i, j, -1, g, state);
+				AddJumpedHoriz(i, j, -1, g, state, OnTheWay(i, j, -1, 0, state.goal));
 				if (passd)
 					AddJumpedDiag(i, j, -1, -1, g, state);
 				if (passu)
@@ -986,16 +1048,16 @@ void CCmpPathfinder::ComputePathJPS(entity_pos_t x0, entity_pos_t z0, const Path
 			}
 			if (passr)
 			{
-				AddJumpedHoriz(i, j, +1, g, state);
+				AddJumpedHoriz(i, j, +1, g, state, OnTheWay(i, j, 1, 0, state.goal));
 				if (passd)
 					AddJumpedDiag(i, j, +1, -1, g, state);
 				if (passu)
 					AddJumpedDiag(i, j, +1, +1, g, state);
 			}
 			if (passd)
-				AddJumpedVert(i, j, -1, g, state);
+				AddJumpedVert(i, j, -1, g, state, OnTheWay(i, j, 0, -1, state.goal));
 			if (passu)
-				AddJumpedVert(i, j, +1, g, state);
+				AddJumpedVert(i, j, +1, g, state, OnTheWay(i, j, 0, 1, state.goal));
 		}
 	}
 
