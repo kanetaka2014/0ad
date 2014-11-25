@@ -805,9 +805,38 @@ void CCmpPathfinder_Hier::FindNearestNavcellInRegions(const std::set<std::pair<u
 void FindGoalRegionID(PathGoal const& goal, std::set<CCmpPathfinder_Hier::RegionID>& goals, CCmpPathfinder_Hier & hier, const CCmpPathfinder::pass_class_t passClass)
 {
 	u16 i0, j0, i1, j1;
-	const fixed margin = goal.hw + goal.hh;
-	hier.m_Pathfinder.NearestNavcell(goal.x - margin, goal.z - margin, i0, j0);
-	hier.m_Pathfinder.NearestNavcell(goal.x + margin, goal.z + margin, i1, j1);
+
+	switch (goal.type)
+	{
+	case PathGoal::POINT:
+	{
+		hier.m_Pathfinder.NearestNavcell(goal.x, goal.z, i0, j0);
+		if (goal.NavcellContainsGoal(i0, j0))
+		{
+			CCmpPathfinder_Hier::RegionID rid = hier.Get(i0, j0, passClass);
+			if (rid.r != 0)
+				goals.insert(rid);
+		}
+		return;
+	}
+	case PathGoal::CIRCLE:
+	case PathGoal::INVERTED_CIRCLE:
+	{
+		hier.m_Pathfinder.NearestNavcell(goal.x - goal.hw, goal.z - goal.hw, i0, j0);
+		hier.m_Pathfinder.NearestNavcell(goal.x + goal.hw, goal.z + goal.hw, i1, j1);
+		break;
+	}
+	case PathGoal::SQUARE:
+	case PathGoal::INVERTED_SQUARE:
+	{
+		CFixedVector2D hbb(Geometry::GetHalfBoundingBox(goal.u, goal.v, CFixedVector2D(goal.hw, goal.hh)));
+		hier.m_Pathfinder.NearestNavcell(goal.x - hbb.X, goal.z - hbb.Y, i0, j0);
+		hier.m_Pathfinder.NearestNavcell(goal.x + hbb.X, goal.z + hbb.Y, i1, j1);
+		break;
+	}
+	default:
+		abort();
+	}
 
 	for (u16 i = i0; i <= i1; ++i)
 	{
