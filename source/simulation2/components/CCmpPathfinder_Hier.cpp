@@ -699,6 +699,12 @@ void CCmpPathfinder_Hier::FindNearestPassableNavcell(u16& i, u16& j, pass_class_
 		{
 			if (cj == nj)
 			{
+				if (cj < 0 || (int)m_Pathfinder.m_Grid->m_H <= cj)
+				{
+					ci = ni;
+					continue;
+				}
+
 				ci += ni > ci ? 1 : -1;
 				//map out so skip to the corner
 				if ((ci < 0 && ni < ci) ||
@@ -710,6 +716,11 @@ void CCmpPathfinder_Hier::FindNearestPassableNavcell(u16& i, u16& j, pass_class_
 			}
 			else
 			{
+				if (ci < 0 || (int)m_Pathfinder.m_Grid->m_W <= ci)
+				{
+					cj = nj;
+					continue;
+				}
 				cj += nj > cj ? 1 : -1;
 				//map out so skip to the corner
 				if ((cj < 0 && nj < cj) ||
