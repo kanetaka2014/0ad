@@ -642,12 +642,12 @@ bool CCmpPathfinder_Hier::MakeGoalReachable(u16 i0, u16 j0, PathGoal& goal, pass
 
 	u16 iGoal, jGoal;
 	m_Pathfinder.NearestNavcell(goal.x, goal.z, iGoal, jGoal);
-	u32 bestdist2 = ((int)i0 - (int)iGoal) * ((int)i0 - (int)iGoal) + ((int)j0 - (int)jGoal) * ((int)j0 - (int)jGoal);
+	//u32 bestdist2 = ((int)i0 - (int)iGoal) * ((int)i0 - (int)iGoal) + ((int)j0 - (int)jGoal) * ((int)j0 - (int)jGoal);
 
 	// Find everywhere that's reachable
 	std::set<std::pair<u32, RegionID>> reachableRegions;
 
-	if (!FindReachableRegions(source, reachableRegions, passClass, bestdist2, goal, iGoal, jGoal))
+	if (!FindReachableRegions(source, reachableRegions, passClass, 0, goal, iGoal, jGoal))
 		return false;
 // 	debug_printf(L"\nReachable from (%d,%d): ", i0, j0);
 // 	for (std::set<RegionID>::iterator it = reachableRegions.begin(); it != reachableRegions.end(); ++it)
@@ -778,10 +778,14 @@ void CCmpPathfinder_Hier::FindNearestNavcellInRegions(const std::set<std::pair<u
 
 	int iBest = iGoal;
 	int jBest = jGoal;
-	u32 dist2Best = regions.begin()->first + (u32)CHUNK_SIZE * (u32)CHUNK_SIZE * 2;
+	//u32 dist2Best = regions.begin()->first + (u32)CHUNK_SIZE * (u32)CHUNK_SIZE * 2;
+	u32 dist2Best = std::numeric_limits<u32>::max();
 
-	for (std::set<std::pair<u32, RegionID>>::const_iterator it = regions.begin(); it->first < dist2Best && it != regions.end() ; ++it)
+	for (std::set<std::pair<u32, RegionID>>::const_iterator it = regions.begin(); it != regions.end() ; ++it)
 	{
+		if ((it->first >= 4 ? ((it->first >> 1) - 1) * ((it->first >> 1) - 1) * CHUNK_SIZE * CHUNK_SIZE * 2 : 0) > dist2Best)
+			break;
+
 		int i, j;
 		u32 dist2;
 		GetChunk(it->second.ci, it->second.cj, passClass).RegionNavcellNearest(it->second.r, iGoal, jGoal, i, j, dist2);
@@ -854,7 +858,7 @@ void FindGoalRegionID(PathGoal const& goal, std::set<CCmpPathfinder_Hier::Region
 
 bool CCmpPathfinder_Hier::FindReachableRegions(RegionID from, std::set<std::pair<u32, RegionID>>& reachable, pass_class_t passClass, u32 bestdist2, PathGoal const& goal, u16 iGoal, u16 jGoal)
 {
-	// Flood-fill the region graph, starting at 'from',
+	// depth first search the region graph, starting at 'from',
 	// collecting the regions that are reachable via edges and not too further than sqrt(bestdist2) from goal
 	// return false if goal is reachable.
 
@@ -869,6 +873,11 @@ bool CCmpPathfinder_Hier::FindReachableRegions(RegionID from, std::set<std::pair
 	if (goals.find(from) != goals.end()) //goal is reachable
 		return false;
 
+	int gci = iGoal / CHUNK_SIZE;
+	int gcj = jGoal / CHUNK_SIZE;
+
+	bestdist2 = abs(from.ci - gci) + abs(from.cj - gcj);
+	
 	std::set<std::pair<u32, RegionID>> regionDistEsts; // pair of (distance^2, region)
 	regionDistEsts.insert(std::pair<u32, RegionID>(bestdist2, from));
 	reachable.insert(std::pair<u32, RegionID>(bestdist2, from));
@@ -882,17 +891,19 @@ bool CCmpPathfinder_Hier::FindReachableRegions(RegionID from, std::set<std::pair
 		const std::set<RegionID>& neighbours = m_Edges[passClass][curr];
 		for (std::set<RegionID>::const_iterator it = neighbours.begin(); it != neighbours.end(); ++it)
 		{
-			int i0 = it->ci * CHUNK_SIZE;
-			int j0 = it->cj * CHUNK_SIZE;
-			int i1 = i0 + CHUNK_SIZE - 1;
-			int j1 = j0 + CHUNK_SIZE - 1;
+			//int i0 = it->ci * CHUNK_SIZE;
+			//int j0 = it->cj * CHUNK_SIZE;
+			//int i1 = i0 + CHUNK_SIZE - 1;
+			//int j1 = j0 + CHUNK_SIZE - 1;
 
-			// Pick the point in the chunk nearest the goal
-			int iNear = Clamp((int)iGoal, i0, i1);
-			int jNear = Clamp((int)jGoal, j0, j1);
+			//// Pick the point in the chunk nearest the goal
+			//int iNear = Clamp((int)iGoal, i0, i1);
+			//int jNear = Clamp((int)jGoal, j0, j1);
 
-			u32 dist2 = (iNear - iGoal)*(iNear - iGoal)
-					  + (jNear - jGoal)*(jNear - jGoal);
+			u32 dist2 = abs(it->ci - gci)+abs(it->cj - gcj);
+
+			//u32 dist2 = (iNear - iGoal)*(iNear - iGoal)
+			//		  + (jNear - jGoal)*(jNear - jGoal);
 
 			if (dist2 < bestdist2)
 				bestdist2 = dist2;
