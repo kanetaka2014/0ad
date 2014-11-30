@@ -67,10 +67,9 @@ public:
 		int width;
 	} Address;
 
-	void Init(int width, int height)
+	void Init(int width, int UNUSED(height))
 	{
 		Address.width = width;
-		//m_edges.reserve(width * height * 2);
 	}
 
 	void Put(int ci, int cj, direction dir, int leftdown, int rightup)
@@ -195,8 +194,6 @@ private:
 		void FloodFill(int i0, int j0, u16 r);
 	};
 
-	typedef std::map<RegionID, std::set<RegionID> > EdgesMap;
-
 	void FindEdges(u8 ci, u8 cj, pass_class_t passClass, Edges& edges);
 
 	void Draw(int i0, int j0, int i1, int j1);
@@ -224,7 +221,6 @@ private:
 	u16 m_ChunksW, m_ChunksH;
 	std::map<pass_class_t, std::vector<Chunk> > m_Chunks;
 	
-	//std::map<pass_class_t, EdgesMap> m_Edges;
 	std::map<pass_class_t, Edges> m_Edges;
 
 public:
@@ -798,7 +794,7 @@ void CCmpPathfinder_Hier::FindNearestPassableNavcell(u16& i, u16& j, pass_class_
 	int besti = -1;
 	int bestj = -1;
 
-	while (bestdist2 > std::max(abs(ci - i0),abs(cj - j0)) * std::max(abs(ci - i0),abs(cj - j0)))
+	while (bestdist2 > (u32)(std::max(abs(ci - i0),abs(cj - j0)) * std::max(abs(ci - i0),abs(cj - j0))))
 	{
 		do
 		{
@@ -866,8 +862,6 @@ void CCmpPathfinder_Hier::FindNearestPassableNavcell(u16& i, u16& j, pass_class_
 	ENSURE(besti < (int)m_Pathfinder.m_Grid->m_W && bestj < (int)m_Pathfinder.m_Grid->m_H);
 	i = besti;
 	j = bestj;
-	ENSURE(i > -1 && j > -1);
-	ENSURE(i < m_Pathfinder.m_Grid->m_W && j < m_Pathfinder.m_Grid->m_H);
 }
 
 void CCmpPathfinder_Hier::FindNearestNavcellInRegions(const std::set<std::pair<u32, RegionID>>& regions, u16& iGoal, u16& jGoal, pass_class_t passClass)
@@ -879,11 +873,8 @@ void CCmpPathfinder_Hier::FindNearestNavcellInRegions(const std::set<std::pair<u
 	// * Stop when the underestimated distances are worse than the best real distance
 	TIMER_ACCRUE(tc_FindNearestNavcellInRegions);
 
-	//std::vector<std::pair<u32, RegionID> > regionDistEsts; // pair of (distance^2, region)
-
 	int iBest = iGoal;
 	int jBest = jGoal;
-	//u32 dist2Best = regions.begin()->first + (u32)CHUNK_SIZE * (u32)CHUNK_SIZE * 2;
 	u32 dist2Best = std::numeric_limits<u32>::max();
 
 	for (std::set<std::pair<u32, RegionID>>::const_iterator it = regions.begin(); it != regions.end() ; ++it)
@@ -907,8 +898,6 @@ void CCmpPathfinder_Hier::FindNearestNavcellInRegions(const std::set<std::pair<u
 
 	iGoal = iBest;
 	jGoal = jBest;
-	ENSURE(iGoal >= 0  && jBest >= 0);
-	ENSURE(iGoal < m_Pathfinder.m_Grid->m_W && jBest < m_Pathfinder.m_Grid->m_H);
 }
 
 void FindGoalRegionID(PathGoal const& goal, std::set<CCmpPathfinder_Hier::RegionID>& goals, CCmpPathfinder_Hier & hier, const CCmpPathfinder::pass_class_t passClass)
@@ -968,7 +957,7 @@ void FindGoalRegionID(PathGoal const& goal, std::set<CCmpPathfinder_Hier::Region
 bool CCmpPathfinder_Hier::FindReachableRegions(RegionID from, std::set<std::pair<u32, RegionID>>& reachable, pass_class_t passClass, u32 bestdist, PathGoal const& goal, u16 iGoal, u16 jGoal)
 {
 	// depth first search the region graph, starting at 'from',
-	// collecting the regions that are reachable via edges and not too further than sqrt(bestdist2) from goal
+	// collecting the regions that are reachable via edges until reaching the goal.
 	// return false if goal is reachable.
 
 
