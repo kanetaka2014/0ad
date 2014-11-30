@@ -37,6 +37,61 @@
 
 class PathfinderHierOverlay;
 
+//	typedef std::map<int, std::pair<RegionID,RegionID>> Edges;
+
+const std::set<std::pair<int, int>> Empty;
+
+// represents Region connection
+class Edges
+{
+public:
+	enum direction {right, up, left, down};
+	struct Address
+	{
+		int Value(int ci, int cj, direction dir) const
+		{
+			ASSERT(ci >= 0 && cj >= 0 && ci < width);
+			switch (dir)
+			{
+			case right:
+			case up:
+				return (cj * 2 + dir) * width + ci;
+			case left:
+				return cj * 2 * width + ci - 1;
+			case down:
+				return ((cj - 1) * 2 + 1) * width + ci;
+			default:
+				abort();
+			}
+		}
+		int width;
+	} Address;
+
+	void Init(int width, int height)
+	{
+		Address.width = width;
+		//m_edges.reserve(width * height * 2);
+	}
+
+	void Put(int ci, int cj, direction dir, int leftdown, int rightup)
+	{
+		if (dir == left || dir == down)
+			std::swap(leftdown, rightup);
+		m_edges[Address.Value(ci, cj, dir)].insert(std::pair<int, int>(leftdown, rightup));
+	}
+
+	// ID order is always left to right or down to up, be careful  
+	const std::set<std::pair<int, int>>& Get(int ci, int cj, direction dir) const
+	{
+		if (m_edges.find(Address.Value(ci, cj, dir)) != m_edges.end())
+			return m_edges.find(Address.Value(ci, cj, dir))->second;
+		else
+			return Empty;
+	}
+private:
+	std::map<int, std::set<std::pair<int, int>>> m_edges;
+};
+
 /**
  * Hierarchical pathfinder.
  * 
@@ -82,6 +137,12 @@ public:
 				return false;
 			return r < b.r;
 		}
+
+		bool operator==(RegionID b) const
+		{
+			return ci == b.ci && cj == b.cj && r == b.r;
+		}
+
 	};
 
 	CCmpPathfinder_Hier(CCmpPathfinder& pathfinder);
@@ -136,7 +197,9 @@ private:
 
 	typedef std::map<RegionID, std::set<RegionID> > EdgesMap;
 
-	void FindEdges(u8 ci, u8 cj, pass_class_t passClass, EdgesMap& edges);
+	void FindEdges(u8 ci, u8 cj, pass_class_t passClass, Edges& edges);
+
+	void Draw(int i0, int j0, int i1, int j1);
 
 	void AddDebugEdges(pass_class_t passClass);
 
@@ -161,7 +224,8 @@ private:
 	u16 m_ChunksW, m_ChunksH;
 	std::map<pass_class_t, std::vector<Chunk> > m_Chunks;
 	
-	std::map<pass_class_t, EdgesMap> m_Edges;
+	//std::map<pass_class_t, EdgesMap> m_Edges;
+	std::map<pass_class_t, Edges> m_Edges;
 
 public:
 	CCmpPathfinder& m_Pathfinder;
@@ -502,7 +566,6 @@ void CCmpPathfinder_Hier::Init(const std::vector<PathfinderPassability>& passCla
 	ENSURE(m_ChunksW < 256 && m_ChunksH < 256); // else the u8 Chunk::m_ChunkI will overflow
 
 	m_Chunks.clear();
-	m_Edges.clear();
 
 	for (size_t n = 0; n < passClasses.size(); ++n)
 	{
@@ -520,7 +583,8 @@ void CCmpPathfinder_Hier::Init(const std::vector<PathfinderPassability>& passCla
 
 		// Construct the search graph over the regions
 
-		EdgesMap& edges = m_Edges[passClass];
+		Edges& edges = m_Edges[passClass];
+		edges.Init(m_ChunksW, m_ChunksH);
 
 		for (int cj = 0; cj < m_ChunksH; ++cj)
 		{
@@ -542,7 +606,7 @@ void CCmpPathfinder_Hier::Init(const std::vector<PathfinderPassability>& passCla
 /**
  * Find edges between regions in this chunk and the adjacent below/left chunks.
  */
-void CCmpPathfinder_Hier::FindEdges(u8 ci, u8 cj, pass_class_t passClass, EdgesMap& edges)
+void CCmpPathfinder_Hier::FindEdges(u8 ci, u8 cj, pass_class_t passClass, Edges& edges)
 {
 	std::vector<Chunk>& chunks = m_Chunks[passClass];
 
@@ -563,8 +627,7 @@ void CCmpPathfinder_Hier::FindEdges(u8 ci, u8 cj, pass_class_t passClass, EdgesM
 			RegionID rb = b.Get(CHUNK_SIZE-1, j);
 			if (ra.r && rb.r)
 			{
-				edges[ra].insert(rb);
-				edges[rb].insert(ra);
+				edges.Put(ci - 1, cj, edges.right, rb.r, ra.r);
 			}
 		}
 	}
@@ -578,12 +641,34 @@ void CCmpPathfinder_Hier::FindEdges(u8 ci, u8 cj, pass_class_t passClass, EdgesM
 			RegionID rb = b.Get(i, CHUNK_SIZE-1);
 			if (ra.r && rb.r)
 			{
-				edges[ra].insert(rb);
-				edges[rb].insert(ra);
+				edges.Put(ci, cj - 1, edges.up, rb.r, ra.r);
 			}
 		}
 	}
 
+}
+
+void CCmpPathfinder_Hier::Draw(int i0, int j0, int i1, int j1)
+{
+	CFixedVector2D a, b;
+	m_Pathfinder.NavcellCenter(i0, j0, a.X, a.Y);
+	m_Pathfinder.NavcellCenter(i1, j1, b.X, b.Y);
+
+	// Push the endpoints inwards a little to avoid overlaps
+	CFixedVector2D d = b - a;
+	d.Normalize(entity_pos_t::FromInt(1));
+	a += d;
+	b -= d;
+
+	std::vector<float> xz;
+	xz.push_back(a.X.ToFloat());
+	xz.push_back(a.Y.ToFloat());
+	xz.push_back(b.X.ToFloat());
+	xz.push_back(b.Y.ToFloat());
+
+	m_DebugOverlayLines.push_back(SOverlayLine());
+	m_DebugOverlayLines.back().m_Color = CColor(1.0, 1.0, 1.0, 1.0);
+	SimRender::ConstructLineOnGround(m_Pathfinder.GetSimContext(), xz, m_DebugOverlayLines.back(), true);
 }
 
 /**
@@ -591,38 +676,44 @@ void CCmpPathfinder_Hier::FindEdges(u8 ci, u8 cj, pass_class_t passClass, EdgesM
  */
 void CCmpPathfinder_Hier::AddDebugEdges(pass_class_t passClass)
 {
-	const EdgesMap& edges = m_Edges[passClass];
+	const Edges& edges = m_Edges[passClass];
 	const std::vector<Chunk>& chunks = m_Chunks[passClass];
 
-	for (EdgesMap::const_iterator it = edges.begin(); it != edges.end(); ++it)
+	//for (EdgesMap::const_iterator it = edges.begin(); it != edges.end(); ++it)
+	for (int cj = 0; cj < m_ChunksH; ++cj)
 	{
-		for (std::set<RegionID>::const_iterator rit = it->second.begin(); rit != it->second.end(); ++rit)
+		for (int ci = 0; ci < m_ChunksW; ++ci)
 		{
-			// Draw a line between the two regions' centers
+			std::set<std::pair<int, int>>::const_iterator it;
+			if (ci > 0)
+			{
+				const std::set<std::pair<int, int>>& IDpairs = edges.Get(ci - 1, cj, edges.right);
+				for (it = IDpairs.begin(); it != IDpairs.end(); ++it)
+				{
+					// Draw a line between the two regions' centers
+					int i0, j0, i1, j1;
 
-			int i0, j0, i1, j1;
-			chunks[it->first.cj * m_ChunksW + it->first.ci].RegionCenter(it->first.r, i0, j0);
-			chunks[rit->cj * m_ChunksW + rit->ci].RegionCenter(rit->r, i1, j1);
+					chunks[cj * m_ChunksW + ci - 1].RegionCenter(it->first, i0, j0);
+					chunks[cj * m_ChunksW + ci].RegionCenter(it->second, i1, j1);
 
-			CFixedVector2D a, b;
-			m_Pathfinder.NavcellCenter(i0, j0, a.X, a.Y);
-			m_Pathfinder.NavcellCenter(i1, j1, b.X, b.Y);
+					Draw(i0, j0, i1, j1);
+				}
+			}
 
-			// Push the endpoints inwards a little to avoid overlaps
-			CFixedVector2D d = b - a;
-			d.Normalize(entity_pos_t::FromInt(1));
-			a += d;
-			b -= d;
+			if (cj > 0)
+			{
+				const std::set<std::pair<int, int>>& IDpairs = edges.Get(ci, cj - 1, edges.up);
+				for (it = IDpairs.begin(); it != IDpairs.end(); ++it)
+				{
+					// Draw a line between the two regions' centers
+					int i0, j0, i1, j1;
 
-			std::vector<float> xz;
-			xz.push_back(a.X.ToFloat());
-			xz.push_back(a.Y.ToFloat());
-			xz.push_back(b.X.ToFloat());
-			xz.push_back(b.Y.ToFloat());
+					chunks[(cj - 1) * m_ChunksW + ci].RegionCenter(it->first, i0, j0);
+					chunks[cj * m_ChunksW + ci].RegionCenter(it->second, i1, j1);
 
-			m_DebugOverlayLines.push_back(SOverlayLine());
-			m_DebugOverlayLines.back().m_Color = CColor(1.0, 1.0, 1.0, 1.0);
-			SimRender::ConstructLineOnGround(m_Pathfinder.GetSimContext(), xz, m_DebugOverlayLines.back(), true);
+					Draw(i0, j0, i1, j1);
+				}
+			}
 		}
 	}
 }
@@ -882,43 +973,90 @@ bool CCmpPathfinder_Hier::FindReachableRegions(RegionID from, std::set<std::pair
 	regionDistEsts.insert(std::pair<u32, RegionID>(bestdist2, from));
 	reachable.insert(std::pair<u32, RegionID>(bestdist2, from));
 
+	RegionID back = from;
 	for (RegionID curr = from; !regionDistEsts.empty(); curr = regionDistEsts.begin()->second)
 	{
 		std::set<std::pair<u32, RegionID>>::iterator iti = regionDistEsts.begin();
 		bestdist2 = iti->first;
-		regionDistEsts.erase(iti);
 
-		const std::set<RegionID>& neighbours = m_Edges[passClass][curr];
-		for (std::set<RegionID>::const_iterator it = neighbours.begin(); it != neighbours.end(); ++it)
+		int ci = iti->second.ci;
+		int cj = iti->second.cj;
+		int rootr = iti->second.r;
+
+		Edges::direction seq_right[] = {Edges::right, Edges::up, Edges::down, Edges::left};
+		Edges::direction seq_up[] = {Edges::up, Edges::left, Edges::right, Edges::down};
+		Edges::direction seq_left[] = {Edges::left, Edges::down, Edges::up, Edges::right};
+		Edges::direction seq_down[] = {Edges::down, Edges::right, Edges::left, Edges::up};
+		const Edges::direction* p_seq;
+
+		//determine next chunk
+		if (gci > ci && gcj >= cj)
+			p_seq = seq_right;
+		else if (gci <= ci && gcj > cj)
+			p_seq = seq_up;
+		else if (gci < ci && gcj <= cj)
+			p_seq = seq_left;
+		else //if (gci <= ci && gcj < cj)
+			p_seq = seq_down;
+
+		for (int cnt = 0; cnt < 4; ++cnt && ++p_seq)
 		{
-			//int i0 = it->ci * CHUNK_SIZE;
-			//int j0 = it->cj * CHUNK_SIZE;
-			//int i1 = i0 + CHUNK_SIZE - 1;
-			//int j1 = j0 + CHUNK_SIZE - 1;
+			//in case of map-out
+			if (ci == 0 && *p_seq == Edges::left)
+				continue;
+			if (ci >= m_ChunksW - 1 && *p_seq == Edges::right)
+				continue;
+			if (cj == 0 && *p_seq == Edges::down)
+				continue;
+			if (cj >= m_ChunksH - 1 && *p_seq == Edges::up)
+				continue;
 
-			//// Pick the point in the chunk nearest the goal
-			//int iNear = Clamp((int)iGoal, i0, i1);
-			//int jNear = Clamp((int)jGoal, j0, j1);
+			const std::set<std::pair<int, int>>& neighbours = m_Edges[passClass].Get(ci, cj, *p_seq);
 
-			u32 dist2 = abs(it->ci - gci)+abs(it->cj - gcj);
-
-			//u32 dist2 = (iNear - iGoal)*(iNear - iGoal)
-			//		  + (jNear - jGoal)*(jNear - jGoal);
-
-			if (dist2 < bestdist2)
-				bestdist2 = dist2;
-
-			bool bl = reachable.insert(std::pair<u32, RegionID>(dist2, *it)).second;
-
-			// Add to the reachable set; if this is the first time we added
-			// it then also add it to the open list
-			if (bl)
+			for (std::set<std::pair<int, int>>::const_iterator it = neighbours.begin(); it != neighbours.end(); ++it)
 			{
-				regionDistEsts.insert(std::pair<u32, RegionID>(dist2, *it));
-				if (goals.find(*it) != goals.end()) //goal is reachable
-					return false;
+				int r, noder;
+				if (*p_seq == Edges::left || *p_seq == Edges::down)
+				{
+					r = it->second;
+					noder = it->first;
+				}
+				else
+				{
+					r = it->first;
+					noder = it->second;
+				}
+
+				if (r != rootr)
+					continue;
+
+				int ni = ci + (*p_seq == Edges::right ? 1 : *p_seq == Edges::left ? -1 : 0);
+				int nj = cj + (*p_seq == Edges::up ? 1 : *p_seq == Edges::down ? -1 : 0);
+
+				if (RegionID(ni, nj, noder) == back) //in case of backtrack
+					continue;
+
+				u32 dist2 = abs(ni - gci)+abs(nj - gcj);
+				std::pair<u32, RegionID> node(dist2, RegionID(ni, nj, noder)); 
+
+				if (dist2 < bestdist2)
+					bestdist2 = dist2;
+
+				bool bl = reachable.insert(node).second;
+
+				// Add to the reachable set; if this is the first time we added
+				// it then also add it to the open list
+				if (bl)
+				{
+					regionDistEsts.insert(node);
+					if (goals.find(node.second) != goals.end()) //goal is reachable
+						return false;
+				}
 			}
+
 		}
+		back = iti->second;
+		regionDistEsts.erase(iti);
 	}
 	return true;
 }
