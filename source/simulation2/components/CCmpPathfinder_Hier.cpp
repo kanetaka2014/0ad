@@ -618,6 +618,7 @@ void CCmpPathfinder_Hier::FindEdges(u8 ci, u8 cj, pass_class_t passClass, Edges&
 	// (We don't need to test for duplicates since EdgesMap already uses a
 	// std::set which will drop duplicate entries.)
 
+	bool gapped = true;
 	if (ci > 0)
 	{
 		Chunk& b = chunks.at(cj*m_ChunksW + (ci-1));
@@ -627,11 +628,18 @@ void CCmpPathfinder_Hier::FindEdges(u8 ci, u8 cj, pass_class_t passClass, Edges&
 			RegionID rb = b.Get(CHUNK_SIZE-1, j);
 			if (ra.r && rb.r)
 			{
-				edges.Put(ci - 1, cj, edges.right, rb.r, ra.r);
+				if (gapped == true)
+				{
+					edges.Put(ci - 1, cj, edges.right, rb.r, ra.r);
+					gapped = false;
+				}
 			}
+			else
+				gapped = true;
 		}
 	}
 
+	gapped = true;
 	if (cj > 0)
 	{
 		Chunk& b = chunks.at((cj-1)*m_ChunksW + ci);
@@ -641,8 +649,14 @@ void CCmpPathfinder_Hier::FindEdges(u8 ci, u8 cj, pass_class_t passClass, Edges&
 			RegionID rb = b.Get(i, CHUNK_SIZE-1);
 			if (ra.r && rb.r)
 			{
-				edges.Put(ci, cj - 1, edges.up, rb.r, ra.r);
+				if (gapped == true)
+				{
+					edges.Put(ci, cj - 1, edges.up, rb.r, ra.r);
+					gapped = false;
+				}
 			}
+			else
+				gapped = true;
 		}
 	}
 
