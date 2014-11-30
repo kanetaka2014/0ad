@@ -969,19 +969,20 @@ bool CCmpPathfinder_Hier::FindReachableRegions(RegionID from, std::set<std::pair
 
 	bestdist2 = abs(from.ci - gci) + abs(from.cj - gcj);
 	
-	std::set<std::pair<u32, RegionID>> regionDistEsts; // pair of (distance^2, region)
-	regionDistEsts.insert(std::pair<u32, RegionID>(bestdist2, from));
+	std::vector<std::pair<u32, RegionID>> regionDistEsts; // pair of (distance^2, region)
+	regionDistEsts.push_back(std::pair<u32, RegionID>(bestdist2, from));
 	reachable.insert(std::pair<u32, RegionID>(bestdist2, from));
 
 	RegionID back = from;
 	for (RegionID curr = from; !regionDistEsts.empty(); curr = regionDistEsts.begin()->second)
 	{
-		std::set<std::pair<u32, RegionID>>::iterator iti = regionDistEsts.begin();
-		bestdist2 = iti->first;
+		std::pair<u32, RegionID> region = regionDistEsts.back();
+		regionDistEsts.pop_back();
 
-		int ci = iti->second.ci;
-		int cj = iti->second.cj;
-		int rootr = iti->second.r;
+		bestdist2 = region.first;
+		int ci = region.second.ci;
+		int cj = region.second.cj;
+		int rootr = region.second.r;
 
 		Edges::direction seq_right[] = {Edges::right, Edges::up, Edges::down, Edges::left};
 		Edges::direction seq_up[] = {Edges::up, Edges::left, Edges::right, Edges::down};
@@ -1048,15 +1049,14 @@ bool CCmpPathfinder_Hier::FindReachableRegions(RegionID from, std::set<std::pair
 				// it then also add it to the open list
 				if (bl)
 				{
-					regionDistEsts.insert(node);
+					regionDistEsts.push_back(node);
 					if (goals.find(node.second) != goals.end()) //goal is reachable
 						return false;
 				}
 			}
 
 		}
-		back = iti->second;
-		regionDistEsts.erase(iti);
+		back = region.second;
 	}
 	return true;
 }
