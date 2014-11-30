@@ -203,7 +203,7 @@ private:
 
 	void AddDebugEdges(pass_class_t passClass);
 
-	bool FindReachableRegions(RegionID from, std::set<std::pair<u32, RegionID>>& reachable, pass_class_t passClass, u32 bestdist2, PathGoal const& goal, u16 iGoal, u16 jGoal);
+	bool FindReachableRegions(RegionID from, std::set<std::pair<u32, RegionID>>& reachable, pass_class_t passClass, u32 bestdist, PathGoal const& goal, u16 iGoal, u16 jGoal);
 
 	void FindPassableRegions(std::set<RegionID>& regions, pass_class_t passClass);
 
@@ -949,19 +949,23 @@ void FindGoalRegionID(PathGoal const& goal, std::set<CCmpPathfinder_Hier::Region
 
 	for (u16 i = i0; i <= i1; ++i)
 	{
+		bool hit = false;
 		for (u16 j = j0; j <= j1; ++j)
 		{
 			if (goal.NavcellContainsGoal(i, j))
 			{
+				hit = true;
 				CCmpPathfinder_Hier::RegionID rid = hier.Get(i, j, passClass);
 				if (rid.r != 0)
 					goals.insert(rid);
 			}
+			else if (hit == true && (goal.type == goal.SQUARE || goal.type == goal.CIRCLE))
+				break;
 		}
 	}
 }
 
-bool CCmpPathfinder_Hier::FindReachableRegions(RegionID from, std::set<std::pair<u32, RegionID>>& reachable, pass_class_t passClass, u32 bestdist2, PathGoal const& goal, u16 iGoal, u16 jGoal)
+bool CCmpPathfinder_Hier::FindReachableRegions(RegionID from, std::set<std::pair<u32, RegionID>>& reachable, pass_class_t passClass, u32 bestdist, PathGoal const& goal, u16 iGoal, u16 jGoal)
 {
 	// depth first search the region graph, starting at 'from',
 	// collecting the regions that are reachable via edges and not too further than sqrt(bestdist2) from goal
@@ -981,11 +985,11 @@ bool CCmpPathfinder_Hier::FindReachableRegions(RegionID from, std::set<std::pair
 	int gci = iGoal / CHUNK_SIZE;
 	int gcj = jGoal / CHUNK_SIZE;
 
-	bestdist2 = abs(from.ci - gci) + abs(from.cj - gcj);
+	bestdist = abs(from.ci - gci) + abs(from.cj - gcj);
 	
-	std::vector<std::pair<u32, RegionID>> regionDistEsts; // pair of (distance^2, region)
-	regionDistEsts.push_back(std::pair<u32, RegionID>(bestdist2, from));
-	reachable.insert(std::pair<u32, RegionID>(bestdist2, from));
+	std::vector<std::pair<u32, RegionID>> regionDistEsts; // pair of (manhattan distance, region)
+	regionDistEsts.push_back(std::pair<u32, RegionID>(bestdist, from));
+	reachable.insert(std::pair<u32, RegionID>(bestdist, from));
 
 	RegionID back = from;
 	for (RegionID curr = from; !regionDistEsts.empty(); curr = regionDistEsts.begin()->second)
@@ -993,25 +997,25 @@ bool CCmpPathfinder_Hier::FindReachableRegions(RegionID from, std::set<std::pair
 		std::pair<u32, RegionID> region = regionDistEsts.back();
 		regionDistEsts.pop_back();
 
-		bestdist2 = region.first;
+		bestdist = region.first;
 		int ci = region.second.ci;
 		int cj = region.second.cj;
 		int rootr = region.second.r;
 
-		Edges::direction seq_right[] = {Edges::right, Edges::up, Edges::down, Edges::left};
-		Edges::direction seq_up[] = {Edges::up, Edges::left, Edges::right, Edges::down};
-		Edges::direction seq_left[] = {Edges::left, Edges::down, Edges::up, Edges::right};
-		Edges::direction seq_down[] = {Edges::down, Edges::right, Edges::left, Edges::up};
+		const Edges::direction seq_right[] = {Edges::right, Edges::up, Edges::down, Edges::left};
+		const Edges::direction seq_up[] = {Edges::up, Edges::left, Edges::right, Edges::down};
+		const Edges::direction seq_left[] = {Edges::left, Edges::down, Edges::up, Edges::right};
+		const Edges::direction seq_down[] = {Edges::down, Edges::right, Edges::left, Edges::up};
 		const Edges::direction* p_seq;
 
 		//determine next chunk
 		if (gci > ci && gcj >= cj)
 			p_seq = seq_right;
-		else if (gci <= ci && gcj > cj)
-			p_seq = seq_up;
 		else if (gci < ci && gcj <= cj)
 			p_seq = seq_left;
-		else //if (gci <= ci && gcj < cj)
+		else if (gcj > cj)
+			p_seq = seq_up;
+		else //if (gcj < cj)
 			p_seq = seq_down;
 
 		for (int cnt = 0; cnt < 4; ++cnt && ++p_seq)
@@ -1051,11 +1055,11 @@ bool CCmpPathfinder_Hier::FindReachableRegions(RegionID from, std::set<std::pair
 				if (RegionID(ni, nj, noder) == back) //in case of backtrack
 					continue;
 
-				u32 dist2 = abs(ni - gci)+abs(nj - gcj);
-				std::pair<u32, RegionID> node(dist2, RegionID(ni, nj, noder)); 
+				u32 dist = abs(ni - gci)+abs(nj - gcj);
+				std::pair<u32, RegionID> node(dist, RegionID(ni, nj, noder)); 
 
-				if (dist2 < bestdist2)
-					bestdist2 = dist2;
+				if (dist < bestdist)
+					bestdist = dist;
 
 				bool bl = reachable.insert(node).second;
 
