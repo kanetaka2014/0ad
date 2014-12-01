@@ -918,6 +918,39 @@ void FindGoalRegionID(PathGoal const& goal, std::set<CCmpPathfinder_Hier::Region
 		return;
 	}
 	case PathGoal::CIRCLE:
+	{
+		j0 = ((goal.z - goal.hw) >> ICmpObstructionManager::NAVCELL_SIZE_LOG2).ToInt_RoundToNegInfinity();
+		j1 = ((goal.z + goal.hw) >> ICmpObstructionManager::NAVCELL_SIZE_LOG2).ToInt_RoundToNegInfinity();
+		u16 jcenter = (goal.z >> ICmpObstructionManager::NAVCELL_SIZE_LOG2).ToInt_RoundToNegInfinity();
+
+		for (u16 j = j0; j <= j1; ++j)
+		{
+			entity_pos_t x;
+			entity_pos_t z;
+			
+			if (j < jcenter)
+				z = entity_pos_t::FromInt(j + 1).Multiply(ICmpObstructionManager::NAVCELL_SIZE);
+			else if (j == jcenter)
+				z = goal.z;
+			else
+				z = entity_pos_t::FromInt(j).Multiply(ICmpObstructionManager::NAVCELL_SIZE);
+
+			fixed sq = ((goal.hw + z - goal.z).Multiply(goal.hw - z + goal.z)).Sqrt();
+			if (sq < fixed::Zero())
+				continue;
+
+			i0 = ((goal.x - sq) >> ICmpObstructionManager::NAVCELL_SIZE_LOG2).ToInt_RoundToNegInfinity();
+			i1 = ((goal.x + sq) >> ICmpObstructionManager::NAVCELL_SIZE_LOG2).ToInt_RoundToNegInfinity();
+
+			for (u16 i = i0; i <= i1; ++i)
+			{
+				CCmpPathfinder_Hier::RegionID rid = hier.Get(i, j, passClass);
+				if (rid.r != 0)
+					goals.insert(rid);
+			}
+		}
+		return;
+	}
 	case PathGoal::INVERTED_CIRCLE:
 	{
 		hier.m_Pathfinder.NearestNavcell(goal.x - goal.hw, goal.z - goal.hw, i0, j0);
