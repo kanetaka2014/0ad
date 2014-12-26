@@ -27,7 +27,7 @@
 
 #define PATHFIND_STATS 0
 
-#define USE_JUMPPOINT_CACHE 0
+#define USE_JUMPPOINT_CACHE 1
 
 #define ACCEPT_DIAGONAL_GAPS 0
 
@@ -336,7 +336,7 @@ public:
 	 * at (ip, j) where i < ip.
 	 * Returns i if there is no such point.
 	 */
-	int GetJumpPointRight(int i, int j, const PathGoal& goal)
+	int GetJumpPointRight(int i, int j, const PathGoal& goal, bool DetectGoal)
 	{
 		int ip;
 		bool obstruction;
@@ -344,39 +344,39 @@ public:
 		// Adjust ip to be a goal cell, if there is one closer than the jump point;
 		// and then return the new ip if there is a goal,
 		// or the old ip if there is a (non-obstruction) jump point
-		if (goal.NavcellRectContainsGoal(i+1, j, ip-1, j, &ip, NULL) || !obstruction)
+		if ((DetectGoal && goal.NavcellRectContainsGoal(i+1, j, ip-1, j, &ip, NULL)) || !obstruction)
 			return ip;
 		return i;
 	}
 
-	int GetJumpPointLeft(int i, int j, const PathGoal& goal)
+	int GetJumpPointLeft(int i, int j, const PathGoal& goal, bool DetectGoal)
 	{
 		int mip; // mirrored value, because m_JumpPointsLeft is generated from a mirrored map
 		bool obstruction;
 		m_JumpPointsLeft[j].Get(m_Width-1 - i, mip, obstruction);
 		int ip = m_Width-1 - mip;
-		if (goal.NavcellRectContainsGoal(i-1, j, ip+1, j, &ip, NULL) || !obstruction)
+		if ((DetectGoal && goal.NavcellRectContainsGoal(i-1, j, ip+1, j, &ip, NULL)) || !obstruction)
 			return ip;
 		return i;
 	}
 
-	int GetJumpPointUp(int i, int j, const PathGoal& goal)
+	int GetJumpPointUp(int i, int j, const PathGoal& goal, bool DetectGoal)
 	{
 		int jp;
 		bool obstruction;
 		m_JumpPointsUp[i].Get(j, jp, obstruction);
-		if (goal.NavcellRectContainsGoal(i, j+1, i, jp-1, NULL, &jp) || !obstruction)
+		if ((DetectGoal && goal.NavcellRectContainsGoal(i, j+1, i, jp-1, NULL, &jp)) || !obstruction)
 			return jp;
 		return j;
 	}
 
-	int GetJumpPointDown(int i, int j, const PathGoal& goal)
+	int GetJumpPointDown(int i, int j, const PathGoal& goal, bool DetectGoal)
 	{
 		int mjp; // mirrored value
 		bool obstruction;
 		m_JumpPointsDown[i].Get(m_Height-1 - j, mjp, obstruction);
 		int jp = m_Height-1 - mjp;
-		if (goal.NavcellRectContainsGoal(i, j-1, i, jp+1, NULL, &jp) || !obstruction)
+		if ((DetectGoal && goal.NavcellRectContainsGoal(i, j-1, i, jp+1, NULL, &jp)) || !obstruction)
 			return jp;
 		return j;
 	}
@@ -644,50 +644,52 @@ inline bool OnTheWay(int i, int j, int di, int dj, const PathGoal& goal)
 
 // Use the jump-point cache to find the jump points:
 
-static void AddJumpedHoriz(int i, int j, int di, PathCost g, PathfinderStateJPS& state)
+static void AddJumpedHoriz(int i, int j, int di, PathCost g, PathfinderStateJPS& state, bool DetectGoal)
 {
 	int jump;
 	if (di > 0)
-		jump = state.jpc->GetJumpPointRight(i, j, state.goal);
+		jump = state.jpc->GetJumpPointRight(i, j, state.goal, DetectGoal);
 	else
-		jump = state.jpc->GetJumpPointLeft(i, j, state.goal);
+		jump = state.jpc->GetJumpPointLeft(i, j, state.goal, DetectGoal);
 
 	if (jump != i)
 		ProcessNeighbour(i, j, jump, j, g, state);
 }
 
-static bool HasJumpedHoriz(int i, int j, int di, PathfinderStateJPS& state)
+//if found JP or goal, returns jump, else returns 0.
+static int HasJumpedHoriz(int i, int j, int di, PathfinderStateJPS& state, bool DetectGoal)
 {
 	int jump;
 	if (di > 0)
-		jump = state.jpc->GetJumpPointRight(i, j, state.goal);
+		jump = state.jpc->GetJumpPointRight(i, j, state.goal, DetectGoal);
 	else
-		jump = state.jpc->GetJumpPointLeft(i, j, state.goal);
+		jump = state.jpc->GetJumpPointLeft(i, j, state.goal, DetectGoal);
 
-	return (jump != i);
+	return (jump != i ? jump : 0);
 }
 
-static void AddJumpedVert(int i, int j, int dj, PathCost g, PathfinderStateJPS& state)
+static void AddJumpedVert(int i, int j, int dj, PathCost g, PathfinderStateJPS& state, bool DetectGoal)
 {
 	int jump;
 	if (dj > 0)
-		jump = state.jpc->GetJumpPointUp(i, j, state.goal);
+		jump = state.jpc->GetJumpPointUp(i, j, state.goal, DetectGoal);
 	else
-		jump = state.jpc->GetJumpPointDown(i, j, state.goal);
+		jump = state.jpc->GetJumpPointDown(i, j, state.goal, DetectGoal);
 
 	if (jump != j)
 		ProcessNeighbour(i, j, i, jump, g, state);
 }
 
-static bool HasJumpedVert(int i, int j, int dj, PathfinderStateJPS& state)
+//if found JP or goal, returns jump, else returns 0.
+static int HasJumpedVert(int i, int j, int dj, PathfinderStateJPS& state, bool DetectGoal)
 {
 	int jump;
 	if (dj > 0)
-		jump = state.jpc->GetJumpPointUp(i, j, state.goal);
+		jump = state.jpc->GetJumpPointUp(i, j, state.goal, DetectGoal);
 	else
-		jump = state.jpc->GetJumpPointDown(i, j, state.goal);
+		jump = state.jpc->GetJumpPointDown(i, j, state.goal, DetectGoal);
 
-	return (jump != j);
+	return (jump != j ? jump : 0);
 }
 
 #else // USE_JUMPPOINT_CACHE
@@ -771,16 +773,17 @@ static void AddJumpedVert(int i, int j, int dj, PathCost g, PathfinderStateJPS& 
 	}
 }
 
-static bool HasJumpedVert(int i, int j, int dj, PathfinderStateJPS& state, bool detectGoal)
+//if found JP or goal, returns nj, else returns 0.
+static int HasJumpedVert(int i, int j, int dj, PathfinderStateJPS& state, bool DetectGoal)
 {
 	ASSERT(dj == 1 || dj == -1);
 	int nj = j + dj;
 	while (true)
 	{
 		if (!PASSABLE(i, nj))
-			return false;
+			return 0;
 
-		if ((detectGoal && state.goal.NavcellContainsGoal(i, nj)) || // XXX
+		if ((DetectGoal && state.goal.NavcellContainsGoal(i, nj)) || // XXX
 #if ACCEPT_DIAGONAL_GAPS
 			(!PASSABLE(i-1, nj) && PASSABLE(i-1, nj+dj)) ||
 			(!PASSABLE(i+1, nj) && PASSABLE(i+1, nj+dj)))
@@ -789,7 +792,7 @@ static bool HasJumpedVert(int i, int j, int dj, PathfinderStateJPS& state, bool 
 			(!PASSABLE(i+1, nj-dj) && PASSABLE(i+1, nj)))
 #endif
 		{
-			return true;
+			return nj;
 		}
 
 		nj += dj;
@@ -797,7 +800,6 @@ static bool HasJumpedVert(int i, int j, int dj, PathfinderStateJPS& state, bool 
 }
 
 #endif // USE_JUMPPOINT_CACHE
-
 
 /*
  * We don't cache diagonal jump points - they're usually so frequent that
@@ -843,13 +845,8 @@ static void AddJumpedDiag(int i, int j, int di, int dj, PathCost g, PathfinderSt
 		}
 #endif
 
-#if USE_JUMPPOINT_CACHE
-		int fi = HasJumpedHoriz(ni, nj, di, state);
-		int fj = HasJumpedVert(ni, nj, dj, state);
-#else
 		int fi = HasJumpedHoriz(ni, nj, di, state, detectGoal ? OnTheWay(ni, nj, di, 0, state.goal) : false);
 		int fj = HasJumpedVert(ni, nj, dj, state, detectGoal ? OnTheWay(ni, nj, 0, dj, state.goal) : false);
-#endif
 		if (fi || fj)
 		{
 			ProcessNeighbour(i, j, ni, nj, g, state);
@@ -871,8 +868,8 @@ void CCmpPathfinder::ComputePathJPS(entity_pos_t x0, entity_pos_t z0, const Path
 {
 	PathfinderStateJPS state = { 0 };
 
-	state.jpc = m_JumpPointCache[passClass].get();
 #if USE_JUMPPOINT_CACHE
+	state.jpc = m_JumpPointCache[passClass].get();
 	if (!state.jpc)
 	{
 		state.jpc = new JumpPointCache;
@@ -978,27 +975,15 @@ void CCmpPathfinder::ComputePathJPS(entity_pos_t x0, entity_pos_t z0, const Path
 			if (!IS_PASSABLE(state.terrain->get(i + dpi, j-1), state.passClass))
 			{
 				AddJumpedDiag(i, j, -dpi, -1, g, state);
-#if USE_JUMPPOINT_CACHE
-				AddJumpedVert(i, j, -1, g, state);
-#else
 				AddJumpedVert(i, j, -1, g, state, OnTheWay(i, j, 0, -1, state.goal));
-#endif
 			}
 			if (!IS_PASSABLE(state.terrain->get(i + dpi, j+1), state.passClass))
 			{
 				AddJumpedDiag(i, j, -dpi, +1, g, state);
-#if USE_JUMPPOINT_CACHE
-				AddJumpedVert(i, j, +1, g, state);
-#else
 				AddJumpedVert(i, j, +1, g, state, OnTheWay(i, j, 0, +1, state.goal));
-#endif
 			}
-#endif	
-#if USE_JUMPPOINT_CACHE
-			AddJumpedHoriz(i, j, -dpi, g, state);
-#else
-			AddJumpedHoriz(i, j, -dpi, g, state, OnTheWay(i, j, -dpi, 0, state.goal));
 #endif
+			AddJumpedHoriz(i, j, -dpi, g, state, OnTheWay(i, j, -dpi, 0, state.goal));
 		}
 		else if (dpi == 0 && dpj != 0)
 		{
@@ -1012,27 +997,15 @@ void CCmpPathfinder::ComputePathJPS(entity_pos_t x0, entity_pos_t z0, const Path
 			if (!IS_PASSABLE(state.terrain->get(i-1, j + dpj), state.passClass))
 			{
 				AddJumpedDiag(i, j, -1, -dpj, g, state);
-#if USE_JUMPPOINT_CACHE
-				AddJumpedHoriz(i, j, -1, g, state);
-#else
 				AddJumpedHoriz(i, j, -1, g, state,OnTheWay(i, j, -1, 0, state.goal));
-#endif
 			}
 			if (!IS_PASSABLE(state.terrain->get(i+1, j + dpj), state.passClass))
 			{
 				AddJumpedDiag(i, j, +1, -dpj, g, state);
-#if USE_JUMPPOINT_CACHE
-				AddJumpedHoriz(i, j, +1, g, state);
-#else
 				AddJumpedHoriz(i, j, +1, g, state,OnTheWay(i, j, +1, 0, state.goal));
-#endif
 			}
-#endif	
-#if USE_JUMPPOINT_CACHE
-			AddJumpedVert(i, j, -dpj, g, state);
-#else
-			AddJumpedVert(i, j, -dpj, g, state, OnTheWay(i, j, 0, -dpj, state.goal));
 #endif
+			AddJumpedVert(i, j, -dpj, g, state, OnTheWay(i, j, 0, -dpj, state.goal));
 		}
 		else if (dpi != 0 && dpj != 0)
 		{
@@ -1043,13 +1016,8 @@ void CCmpPathfinder::ComputePathJPS(entity_pos_t x0, entity_pos_t z0, const Path
 			if (!IS_PASSABLE(state.terrain->get(i, j + dpj), state.passClass))
 				AddJumpedDiag(i, j, -dpi, dpj, g, state);
 #endif
-#if USE_JUMPPOINT_CACHE
-			AddJumpedHoriz(i, j, -dpi, g, state);
-			AddJumpedVert(i, j, -dpj, g, state);
-#else
 			AddJumpedHoriz(i, j, -dpi, g, state, OnTheWay(i, j, -dpi, 0, state.goal));
 			AddJumpedVert(i, j, -dpj, g, state, OnTheWay(i, j, 0, -dpj, state.goal));
-#endif
 			AddJumpedDiag(i, j, -dpi, -dpj, g, state);
 		}
 		else
