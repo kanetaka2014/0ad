@@ -27,7 +27,7 @@
 
 #define PATHFIND_STATS 0
 
-#define USE_JUMPPOINT_CACHE 1
+#define USE_JUMPPOINT_CACHE 0
 
 #define ACCEPT_DIAGONAL_GAPS 0
 
@@ -723,7 +723,7 @@ static void AddJumpedHoriz(int i, int j, int di, PathCost g, PathfinderStateJPS&
 }
 
 //if found JP or goal, returns ni, else returns 0.
-static int HasJumpedHoriz(int i, int j, int di, PathfinderStateJPS& state)
+static int HasJumpedHoriz(int i, int j, int di, PathfinderStateJPS& state, bool detectGoal)
 {
 	ASSERT(di == 1 || di == -1);
 	int ni = i + di;
