@@ -22,6 +22,7 @@
 #include "renderer/Scene.h"
 #include "renderer/TerrainOverlay.h"
 #include "simulation2/helpers/Render.h"
+#include <bitset>
 
 #define PATHFINDER_HIER_PROFILE 1
 #if PATHFINDER_HIER_PROFILE
@@ -166,6 +167,13 @@ public:
 	 */
 	void FindNearestPassableNavcell(u16& i, u16& j, pass_class_t passClass);
 
+	void FindNearestReachableNavcell(u16& i, u16& j, u16 r, pass_class_t passClass);
+
+	/**
+	 * Spiral search nearest desired cell from (i, j)
+	 */
+	void CCmpPathfinder_Hier::FindNearestDesiredNavcell(u16& i, u16& j, u16 r, pass_class_t passClass, bool (*pCond)(u16, u16, pass_class_t, CCmpPathfinder_Hier*, u16));
+	
 	void SetDebugOverlay(bool enabled);
 
 private:
@@ -180,7 +188,7 @@ private:
 
 		cassert(CHUNK_SIZE*CHUNK_SIZE/2 < 65536); // otherwise we could overflow m_NumRegions with a checkerboard pattern
 
-		void InitRegions(int ci, int cj, Grid<NavcellData>* grid, pass_class_t passClass);
+		void InitRegions(int ci, int cj, Grid<NavcellData>* grid, pass_class_t passClass, int* pID, std::vector<u16>& connect, CCmpPathfinder_Hier& hier);
 
 		RegionID Get(int i, int j);
 
@@ -220,9 +228,11 @@ private:
 	
 	std::map<pass_class_t, Edges> m_Edges;
 
+
 public:
 	CCmpPathfinder& m_Pathfinder;
 	std::vector<SOverlayLine> m_DebugOverlayLines;
+	std::vector<std::vector<u16> > m_connects;
 };
 
 class PathfinderHierOverlay : public TerrainTextureOverlay
@@ -263,7 +273,7 @@ public:
 };
 
 // Find the root ID of a region, used by InitRegions
-inline u16 RootID(u16 x, std::vector<u16> v)
+inline u16 RootID(u16 x, std::vector<u16>& v)
 {
 	// Just add a basic check for infinite loops
 	int checkLoop = 0;
@@ -277,7 +287,7 @@ inline u16 RootID(u16 x, std::vector<u16> v)
 	return x;
 }
 
-void CCmpPathfinder_Hier::Chunk::InitRegions(int ci, int cj, Grid<NavcellData>* grid, pass_class_t passClass)
+void CCmpPathfinder_Hier::Chunk::InitRegions(int ci, int cj, Grid<NavcellData>* grid, pass_class_t passClass, int* pID, std::vector<u16>& connect, CCmpPathfinder_Hier& hier)
 {
 	TIMER_ACCRUE(tc_InitRegions);
 	ENSURE(ci < 256 && cj < 256); // avoid overflows
@@ -293,15 +303,13 @@ void CCmpPathfinder_Hier::Chunk::InitRegions(int ci, int cj, Grid<NavcellData>* 
 
 	// Efficiently flood-fill the m_Regions grid
 
-	int regionID = 0;
-	std::vector<u16> connect;
+	int regionID = *pID;
+	//std::vector<u16> connect;
 
 	u16* pCurrentID = NULL;
 	u16 LeftID = 0;
 	u16 DownID = 0;
 
-	connect.reserve(32); // TODO: What's a sensible number?
-	connect.push_back(0); // connect[0] = 0
 	
 	// Start by filling the grid with 0 for blocked,
 	// and regionID for unblocked
@@ -318,11 +326,15 @@ void CCmpPathfinder_Hier::Chunk::InitRegions(int ci, int cj, Grid<NavcellData>* 
 			
 			if (j > j0)
 				DownID = m_Regions[j-1-j0][i-i0];
+			else if (cj > 0)
+				DownID = hier.Get(i, j - 1, passClass).r;
 
-			if (i == i0)
-				LeftID = 0;
-			else
+			if (i > i0)
 				LeftID = m_Regions[j-j0][i-1-i0];
+			else if (ci > 0)
+				LeftID = hier.Get(i - 1, j, passClass).r;
+			else
+				LeftID = 0;
 
 			if (LeftID > 0)
 			{
@@ -331,6 +343,9 @@ void CCmpPathfinder_Hier::Chunk::InitRegions(int ci, int cj, Grid<NavcellData>* 
 				{
 					u16 id0 = RootID(DownID, connect);
 					u16 id1 = RootID(LeftID, connect);
+
+					//if (id0 == 0) id0 = DownID;
+					//if (id1 == 0) id1 = DownID;
 						
 					if (id0 < id1)
 						connect[id1] = id0;
@@ -344,20 +359,33 @@ void CCmpPathfinder_Hier::Chunk::InitRegions(int ci, int cj, Grid<NavcellData>* 
 			{
 				// New ID
 				*pCurrentID = ++regionID;
-				connect.push_back(regionID);
+				if (connect.size() > regionID)
+					connect[regionID] = regionID;
+				else
+					connect.push_back(regionID);
 			}
 		}
 	}
 
 	// Directly point the root ID
+	if (regionID + 1 < connect.size())
+	{
+		std::vector<u16>::iterator it = connect.begin() + regionID + 1;
+		connect.erase(it, connect.end());
+	}
 	m_NumRegions = 0;
-	for (u16 i = regionID; i > 0; --i)
+	u16 imax = *pID;
+	for (u16 i = regionID; i > *pID; --i)
 	{
 		if (connect[i] == i)
+		{
 			++m_NumRegions;
+			imax = std::max(imax, i);
+		}
 		else
 			connect[i] = RootID(i,connect);
 	}
+	*pID = imax; //ID must be unique globally
 
 	// Replace IDs by the root ID
 	for (int i = 0; i < CHUNK_SIZE; ++i)
@@ -500,32 +528,40 @@ void CCmpPathfinder_Hier::Init(const std::vector<PathfinderPassability>& passCla
 
 	m_Chunks.clear();
 
+	m_connects.resize(passClasses.size());
+
 	for (size_t n = 0; n < passClasses.size(); ++n)
 	{
 		pass_class_t passClass = passClasses[n].m_Mask;
 
 		// Compute the regions within each chunk
 		m_Chunks[passClass].resize(m_ChunksW*m_ChunksH);
+
+		std::vector<u16>& connect = m_connects[n];
+		connect.reserve(32); // TODO: What's a sensible number?
+		connect.push_back(0); // connect[0] = 0
+		int RegionID = 0;
+
 		for (int cj = 0; cj < m_ChunksH; ++cj)
 		{
 			for (int ci = 0; ci < m_ChunksW; ++ci)
 			{
-				m_Chunks[passClass].at(cj*m_ChunksW + ci).InitRegions(ci, cj, grid, passClass);
+				m_Chunks[passClass].at(cj*m_ChunksW + ci).InitRegions(ci, cj, grid, passClass, &RegionID, connect, *this);
 			}
 		}
 
 		// Construct the search graph over the regions
 
-		Edges& edges = m_Edges[passClass];
-		edges.Init(m_ChunksW, m_ChunksH);
+		//Edges& edges = m_Edges[passClass];
+		//edges.Init(m_ChunksW, m_ChunksH);
 
-		for (int cj = 0; cj < m_ChunksH; ++cj)
-		{
-			for (int ci = 0; ci < m_ChunksW; ++ci)
-			{
-				FindEdges(ci, cj, passClass, edges);
-			}
-		}
+		//for (int cj = 0; cj < m_ChunksH; ++cj)
+		//{
+		//	for (int ci = 0; ci < m_ChunksW; ++ci)
+		//	{
+		//		FindEdges(ci, cj, passClass, edges);
+		//	}
+		//}
 	}
 
 	if (m_DebugOverlay)
@@ -696,8 +732,11 @@ bool CCmpPathfinder_Hier::MakeGoalReachable(u16 i0, u16 j0, PathGoal& goal, pass
 	// The goal area wasn't reachable,
 	// so find the navcell that's nearest to the goal's center
 
+	u16 r = Get(i0, j0, passClass).r;
 
-	FindNearestNavcellInRegions(reachableRegions, iGoal, jGoal, passClass);
+	FindNearestReachableNavcell(iGoal, jGoal, r, passClass);
+
+	//FindNearestNavcellInRegions(reachableRegions, iGoal, jGoal, passClass);
 
 	// Construct a new point goal at the nearest reachable navcell
 	PathGoal newGoal;
@@ -708,7 +747,36 @@ bool CCmpPathfinder_Hier::MakeGoalReachable(u16 i0, u16 j0, PathGoal& goal, pass
 	return true;
 }
 
+
+static bool IsPassable(u16 i, u16 j, ICmpPathfinder::pass_class_t passClass, CCmpPathfinder_Hier* pHier, u16 UNUSED(r))
+{
+	return IS_PASSABLE(pHier->m_Pathfinder.m_Grid->get(i, j), passClass);
+}
+
+static bool IsReachable(u16 i, u16 j, ICmpPathfinder::pass_class_t passClass, CCmpPathfinder_Hier* pHier, u16 r)
+{
+	std::bitset<16> bitSeries((passClass & (-passClass)) - 1);
+	const int index = bitSeries.count() - 2;
+	std::vector<u16>& connect = pHier->m_connects[index];
+	
+	return connect[r] == connect[pHier->Get(i, j, passClass).r];
+}
+
 void CCmpPathfinder_Hier::FindNearestPassableNavcell(u16& i, u16& j, pass_class_t passClass)
+{
+	bool (*pCond)(u16, u16, ICmpPathfinder::pass_class_t, CCmpPathfinder_Hier*, u16) = IsPassable;
+
+	FindNearestDesiredNavcell(i, j, 0, passClass, pCond);
+}
+
+void CCmpPathfinder_Hier::FindNearestReachableNavcell(u16& i, u16& j, u16 r, pass_class_t passClass)
+{
+	bool (*pCond)(u16, u16, ICmpPathfinder::pass_class_t, CCmpPathfinder_Hier*, u16) = IsReachable;
+
+	FindNearestDesiredNavcell(i, j, r, passClass, pCond);
+}
+
+void CCmpPathfinder_Hier::FindNearestDesiredNavcell(u16& i, u16& j, u16 r, pass_class_t passClass, bool (*pCond)(u16, u16, ICmpPathfinder::pass_class_t, CCmpPathfinder_Hier*, u16))
 // Spiral search passable cell from (i, j)
 {
 	int i0 = i;
@@ -769,7 +837,7 @@ void CCmpPathfinder_Hier::FindNearestPassableNavcell(u16& i, u16& j, pass_class_
 				}
 			}
 
-			if (IS_PASSABLE(m_Pathfinder.m_Grid->get(ci, cj), passClass))
+			if ((*pCond)(ci, cj, passClass, this, r))
 			{
 				dist2 =(ci - i0)*(ci - i0) + (cj - j0)*(cj - j0);
 				if (dist2 < bestdist2)
@@ -836,7 +904,7 @@ void CCmpPathfinder_Hier::FindNearestNavcellInRegions(const std::set<std::pair<u
 	jGoal = jBest;
 }
 
-void FindGoalRegionID(PathGoal const& goal, std::set<CCmpPathfinder_Hier::RegionID>& goals, CCmpPathfinder_Hier & hier, const CCmpPathfinder::pass_class_t passClass)
+void FindGoalRegionID(PathGoal const& goal, std::set<u16>& goals, CCmpPathfinder_Hier & hier, const CCmpPathfinder::pass_class_t passClass, const std::vector<u16>& connect)
 {
 	u16 i0, j0, i1, j1;
 
@@ -849,7 +917,7 @@ void FindGoalRegionID(PathGoal const& goal, std::set<CCmpPathfinder_Hier::Region
 		{
 			CCmpPathfinder_Hier::RegionID rid = hier.Get(i0, j0, passClass);
 			if (rid.r != 0)
-				goals.insert(rid);
+				goals.insert(connect[rid.r]);
 		}
 		return;
 	}
@@ -882,7 +950,7 @@ void FindGoalRegionID(PathGoal const& goal, std::set<CCmpPathfinder_Hier::Region
 				hit = true;
 				CCmpPathfinder_Hier::RegionID rid = hier.Get(i, j, passClass);
 				if (rid.r != 0)
-					goals.insert(rid);
+					goals.insert(connect[rid.r]);
 			}
 			else if (hit == true && (goal.type == goal.SQUARE || goal.type == goal.CIRCLE))
 				break;
@@ -899,11 +967,27 @@ bool CCmpPathfinder_Hier::FindReachableRegions(RegionID from, std::set<std::pair
 	TIMER_ACCRUE(tc_FindReachableRegions);
 	ENSURE(from.r != 0);
 
-	std::set<CCmpPathfinder_Hier::RegionID> goals;
-	FindGoalRegionID(goal, goals, *this, passClass);
+	std::bitset<16> bitSeries((passClass & (-passClass)) - 1);
+	const int index = bitSeries.count() - 2;
+	const std::vector<u16>& connect = m_connects[index];
 
-	if (goals.find(from) != goals.end()) //goal is reachable
+	u16 fr = connect[from.r];
+
+	if (goal.type == goal.POINT || goal.type == goal.SQUARE || goal.type == goal.CIRCLE)
+	{
+		u16 gr = connect[Get(iGoal, jGoal, passClass).r];
+		if (fr == gr)
+			return false;
+	}
+
+	std::set<u16> goals;
+	FindGoalRegionID(goal, goals, *this, passClass, connect);
+
+	if (goals.find(fr) != goals.end()) //goal is reachable
 		return false;
+
+	//goal is unreachable
+	return true;
 
 	int gci = iGoal / CHUNK_SIZE;
 	int gcj = jGoal / CHUNK_SIZE;
@@ -991,7 +1075,7 @@ bool CCmpPathfinder_Hier::FindReachableRegions(RegionID from, std::set<std::pair
 				if (bl)
 				{
 					regionDistEsts.push_back(node);
-					if (goals.find(node.second) != goals.end()) //goal is reachable
+					if (goals.find(node.second.r) != goals.end()) //goal is reachable
 						return false;
 				}
 			}
