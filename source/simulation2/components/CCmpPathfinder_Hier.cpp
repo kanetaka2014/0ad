@@ -464,6 +464,9 @@ void CCmpPathfinder_Hier::Init(const std::vector<PathfinderPassability>& passCla
 
 	for (size_t n = 0; n < passClasses.size(); ++n)
 	{
+		if (!passClasses[n].m_HasClearance) //no clearance class is never used
+			continue;
+
 		pass_class_t passClass = passClasses[n].m_Mask;
 
 		// Compute the regions within each chunk
