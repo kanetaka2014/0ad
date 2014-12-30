@@ -741,6 +741,142 @@ void CCmpObstructionManager::Rasterize(Grid<u16>& grid, entity_pos_t expand, ICm
 		const StaticShape& shape = it->second;
 		if (shape.flags & requireMask)
 		{
+			CFixedVector2D uw(shape.u.Multiply(shape.hw + expand));
+			CFixedVector2D vh(shape.v.Multiply(shape.hh + expand));
+
+			if (uw.Y < fixed::Zero() && uw.X < fixed::Zero())
+			{
+				uw = -uw;
+				vh = -vh;
+			}
+			else if (uw.Y < fixed::Zero())
+			{
+				std::swap(uw, vh);
+				vh = -vh;
+			}
+			else if (uw.X < fixed::Zero())
+			{
+				std::swap(uw, vh);
+				uw = -uw;
+			}
+
+			//P1 needs to have max z value, and P2 needs to have max x value, P3 needs to have min z value, and P4 needs to have min x value.
+			CFixedVector2D P1(CFixedVector2D(shape.x, shape.z) + uw + vh);
+			CFixedVector2D P2(CFixedVector2D(shape.x, shape.z) + uw - vh);
+			CFixedVector2D P3(CFixedVector2D(shape.x, shape.z) - uw - vh);
+			CFixedVector2D P4(CFixedVector2D(shape.x, shape.z) - uw + vh);
+
+			u16 i, j, i1, i2, i3, i4, j1, j2, j3, j4;
+
+			NearestNavcell(P1.X, P1.Y, i1, j1, grid.m_W, grid.m_H);
+			NearestNavcell(P2.X, P2.Y, i2, j2, grid.m_W, grid.m_H);
+			NearestNavcell(P3.X, P3.Y, i3, j3, grid.m_W, grid.m_H);
+			NearestNavcell(P4.X, P4.Y, i4, j4, grid.m_W, grid.m_H);
+			i = i1;
+			j = j1;
+
+			ENSURE(j1 > j3);
+			
+			//axis aligned square
+			if (shape.u.X == fixed::Zero() || shape.u.Y == fixed::Zero()  || shape.v.X == fixed::Zero() || shape.v.Y == fixed::Zero())
+			{
+				for (--j; j > j2; --j)
+				{
+					for (--i; i > i3; --i)
+						grid.set(i, j, grid.get(i, j) | setMask);
+				}
+				continue;
+			}
+
+			//no axis-aligned square
+			std::vector<int> ibegin(j1 - j3 + 1);
+			std::vector<int> iend(j1 - j3 + 1);
+
+			fixed dx = P2.X - P1.X;
+			fixed dy = P2.Y - P1.Y;
+
+			// isOutside equals the cross product of vector(P1P2) X vector(P1p), p(i,j)
+			// isOutside < 0: inside the shape, isOutside == 0: on line, isOutside > 0: outside the shape.
+			fixed isOutside(dx.Multiply(fixed::FromInt(j)-P1.Y) - dy.Multiply(fixed::FromInt(i)-P1.X)); 
+
+			while (j > j2)
+			{
+				while (isOutside < fixed::Zero())
+				{
+					isOutside = isOutside - dy;
+					++i;
+				}
+				iend[j - 1 - j3] = std::min(i - 1, (int)grid.m_W);
+
+				isOutside = isOutside - dx;
+				--j;
+
+			}
+
+			//j = j2;
+			i = i2;
+			dx = P3.X - P2.X;
+			dy = P3.Y - P2.Y;
+			isOutside = fixed(dx.Multiply(fixed::FromInt(j)-P2.Y) - dy.Multiply(fixed::FromInt(i)-P2.X));
+			while (j > j3)
+			{
+				while (isOutside > fixed::Zero())
+				{
+					isOutside = isOutside + dy;
+					--i;
+				}
+				iend[j - j3] = std::min(i+0, j == j2 ? iend[j - j3] : (int)grid.m_W);
+
+				isOutside = isOutside - dx;
+				--j;
+			}
+
+			//j = j3;
+			i = i3;
+			dx = P4.X - P3.X;
+			dy = P4.Y - P3.Y;
+			isOutside = fixed(dx.Multiply(fixed::FromInt(j)-P3.Y) - dy.Multiply(fixed::FromInt(i)-P3.X));
+			while (j <= j4)
+			{
+				while (isOutside < fixed::Zero())
+				{
+					isOutside = isOutside + dy;
+					--i;
+				}
+				ibegin[j - j3] = std::max(i + 1, 0);
+
+				isOutside = isOutside + dx;
+				++j;
+			}
+
+			i = i4;
+			dx = P1.X - P4.X;
+			dy = P1.Y - P4.Y;
+			isOutside = fixed(dx.Multiply(fixed::FromInt(j)-P4.Y) - dy.Multiply(fixed::FromInt(i)-P4.X));
+			while (j <= j1)
+			{
+				while (isOutside > fixed::Zero())
+				{
+					isOutside = isOutside - dy;
+					++i;
+				}
+				ibegin[j - 1 - j3] = std::max(i+0, j == j4 + 1 ? ibegin[j - 1 - j3] : 0) ;
+
+				isOutside = isOutside + dx;
+				++j;
+			}
+
+			for (j = j1; j > j3; --j)
+			{
+				if (ibegin[j - j3] >= iend[j - j3])
+					continue;
+
+				for (i = ibegin[j - j3]; i < iend[j - j3]; ++i)
+					grid.set(i, j, grid.get(i, j) | setMask);
+			}
+
+#if DEBUG
+			//for test, comare result of previous code.
 			ObstructionSquare square = { shape.x, shape.z, shape.u, shape.v, shape.hw, shape.hh };
 			SimRasterize::Spans spans;
 			SimRasterize::RasterizeRectWithClearance(spans, square, expand, ICmpObstructionManager::NAVCELL_SIZE);
@@ -749,12 +885,21 @@ void CCmpObstructionManager::Rasterize(Grid<u16>& grid, entity_pos_t expand, ICm
 				i16 j = spans[k].j;
 				if (j >= 0 && j <= grid.m_H)
 				{
-					i16 i0 = std::max(spans[k].i0, (i16)0);
-					i16 i1 = std::min(spans[k].i1, (i16)grid.m_W);
-					for (i16 i = i0; i < i1; ++i)
-						grid.set(i, j, grid.get(i, j) | setMask);
+					i16 ii0 = std::max(spans[k].i0, (i16)0);
+					i16 ii1 = std::min(spans[k].i1, (i16)grid.m_W);
+
+					if (!(ii0 == ibegin[j - j3] && ii1 == iend[j - j3]))
+					{
+						debug_printf(L"P1:%d,%d P2:%d,%d P3:%d,%d P4:%d,%d\n", i1, j1, i2, j2, i3, j3, i4, j4);
+
+						const fixed cellSize(ICmpObstructionManager::NAVCELL_SIZE);
+						fixed clearance(expand);
+
+						debug_printf(L"ibegin[%d  - j3], ii0, ii1, iend[%d - j3]: %d %d %d %d\n", j, j, ibegin[j - j3], ii0, ii1, iend[j - j3]);
+					}
 				}
 			}
+#endif
 		}
 	}
 
