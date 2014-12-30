@@ -63,6 +63,7 @@ public:
 			default:
 				abort();
 			}
+			return 0;
 		}
 		int width;
 	} Address;
@@ -100,10 +101,9 @@ private:
  * The navcell-grid representation of the map is split into fixed-size chunks.
  * Within a chunks, each maximal set of adjacently-connected passable navcells
  * is defined as a region.
- * Each region is a vertex in the hierarchical pathfinder's graph.
- * When two regions in adjacent chunks are connected by passable navcells,
- * the graph contains an edge between the corresponding two vertexes.
- * (There will never be an edge between two regions in the same chunk.)
+ * Each region has global unique ID and can have a link to other region which has
+ * smaller ID. Thus the connection of regions is represented as tree structure so
+ * any of two regions which have common root region are connected.
  *
  * Since regions are typically fairly large, it is possible to determine
  * connectivity between any two navcells by mapping them onto their appropriate
@@ -188,33 +188,18 @@ private:
 
 		cassert(CHUNK_SIZE*CHUNK_SIZE/2 < 65536); // otherwise we could overflow m_NumRegions with a checkerboard pattern
 
-		void InitRegions(int ci, int cj, Grid<NavcellData>* grid, pass_class_t passClass, int* pID, std::vector<u16>& connect, CCmpPathfinder_Hier& hier);
+		void InitRegions(int ci, int cj, Grid<NavcellData>* grid, pass_class_t passClass, unsigned* pID, std::vector<u16>& connect, CCmpPathfinder_Hier& hier);
 
 		RegionID Get(int i, int j);
 
 		void RegionCenter(u16 r, int& i, int& j) const;
-
-		bool RegionContainsGoal(u16 r, const PathGoal& goal) const;
-
-		void RegionNavcellNearest(u16 r, int iGoal, int jGoal, int& iBest, int& jBest, u32& dist2Best) const;
 	};
-
-	void FindEdges(u8 ci, u8 cj, pass_class_t passClass, Edges& edges);
 
 	void Draw(int i0, int j0, int i1, int j1);
 
 	void AddDebugEdges(pass_class_t passClass);
 
-	bool FindReachableRegions(RegionID from, std::set<std::pair<u32, RegionID>>& reachable, pass_class_t passClass, u32 bestdist, PathGoal const& goal, u16 iGoal, u16 jGoal);
-
-	void FindPassableRegions(std::set<RegionID>& regions, pass_class_t passClass);
-
-	/**
-	 * Updates @p iGoal and @p jGoal to the navcell that is the nearest to the
-	 * initial goal coordinates, in one of the given @p regions.
-	 * (Assumes @p regions is non-empty.)
-	 */
-	void FindNearestNavcellInRegions(const std::set<std::pair<u32, RegionID>>& regions, u16& iGoal, u16& jGoal, pass_class_t passClass);
+	bool FindReachableRegions(RegionID from, pass_class_t passClass, PathGoal const& goal, u16 iGoal, u16 jGoal);
 
 	Chunk& GetChunk(u8 ci, u8 cj, pass_class_t passClass)
 	{
@@ -227,7 +212,6 @@ private:
 	std::map<pass_class_t, std::vector<Chunk> > m_Chunks;
 	
 	std::map<pass_class_t, Edges> m_Edges;
-
 
 public:
 	CCmpPathfinder& m_Pathfinder;
@@ -287,7 +271,7 @@ inline u16 RootID(u16 x, std::vector<u16>& v)
 	return x;
 }
 
-void CCmpPathfinder_Hier::Chunk::InitRegions(int ci, int cj, Grid<NavcellData>* grid, pass_class_t passClass, int* pID, std::vector<u16>& connect, CCmpPathfinder_Hier& hier)
+void CCmpPathfinder_Hier::Chunk::InitRegions(int ci, int cj, Grid<NavcellData>* grid, pass_class_t passClass, unsigned* pID, std::vector<u16>& connect, CCmpPathfinder_Hier& hier)
 {
 	TIMER_ACCRUE(tc_InitRegions);
 	ENSURE(ci < 256 && cj < 256); // avoid overflows
@@ -303,7 +287,7 @@ void CCmpPathfinder_Hier::Chunk::InitRegions(int ci, int cj, Grid<NavcellData>* 
 
 	// Efficiently flood-fill the m_Regions grid
 
-	int regionID = *pID;
+	unsigned regionID = *pID;
 	//std::vector<u16> connect;
 
 	u16* pCurrentID = NULL;
@@ -438,58 +422,6 @@ void CCmpPathfinder_Hier::Chunk::RegionCenter(u16 r, int& i_out, int& j_out) con
 	j_out = m_ChunkJ * CHUNK_SIZE + sj / n;
 }
 
-/**
- * Returns whether any navcell in the given region is inside the goal.
- */
-bool CCmpPathfinder_Hier::Chunk::RegionContainsGoal(u16 r, const PathGoal& goal) const
-{
-	// Inefficiently check every single navcell:
-	for (u16 j = 0; j < CHUNK_SIZE; ++j)
-	{
-		for (u16 i = 0; i < CHUNK_SIZE; ++i)
-		{
-			if (m_Regions[j][i] == r)
-			{
-				if (goal.NavcellContainsGoal(m_ChunkI * CHUNK_SIZE + i, m_ChunkJ * CHUNK_SIZE + j))
-					return true;
-			}
-		}
-	}
-
-	return false;
-}
-
-/**
- * Returns the global navcell coords, and the squared distance to the goal
- * navcell, of whichever navcell inside the given region is closest to
- * that goal.
- */
-void CCmpPathfinder_Hier::Chunk::RegionNavcellNearest(u16 r, int iGoal, int jGoal, int& iBest, int& jBest, u32& dist2Best) const
-{
-	iBest = 0;
-	jBest = 0;
-	dist2Best = std::numeric_limits<u32>::max();
-
-	for (int j = 0; j < CHUNK_SIZE; ++j)
-	{
-		for (int i = 0; i < CHUNK_SIZE; ++i)
-		{
-			if (m_Regions[j][i] == r)
-			{
-				u32 dist2 = (i + m_ChunkI*CHUNK_SIZE - iGoal)*(i + m_ChunkI*CHUNK_SIZE - iGoal)
-				          + (j + m_ChunkJ*CHUNK_SIZE - jGoal)*(j + m_ChunkJ*CHUNK_SIZE - jGoal);
-
-				if (dist2 < dist2Best)
-				{
-					iBest = i + m_ChunkI*CHUNK_SIZE;
-					jBest = j + m_ChunkJ*CHUNK_SIZE;
-					dist2Best = dist2;
-				}
-			}
-		}
-	}
-}
-
 CCmpPathfinder_Hier::CCmpPathfinder_Hier(CCmpPathfinder& pathfinder) :
 	m_Pathfinder(pathfinder)
 {
@@ -540,7 +472,7 @@ void CCmpPathfinder_Hier::Init(const std::vector<PathfinderPassability>& passCla
 		std::vector<u16>& connect = m_connects[n];
 		connect.reserve(32); // TODO: What's a sensible number?
 		connect.push_back(0); // connect[0] = 0
-		int RegionID = 0;
+		unsigned RegionID = 0;
 
 		for (int cj = 0; cj < m_ChunksH; ++cj)
 		{
@@ -549,19 +481,6 @@ void CCmpPathfinder_Hier::Init(const std::vector<PathfinderPassability>& passCla
 				m_Chunks[passClass].at(cj*m_ChunksW + ci).InitRegions(ci, cj, grid, passClass, &RegionID, connect, *this);
 			}
 		}
-
-		// Construct the search graph over the regions
-
-		//Edges& edges = m_Edges[passClass];
-		//edges.Init(m_ChunksW, m_ChunksH);
-
-		//for (int cj = 0; cj < m_ChunksH; ++cj)
-		//{
-		//	for (int ci = 0; ci < m_ChunksW; ++ci)
-		//	{
-		//		FindEdges(ci, cj, passClass, edges);
-		//	}
-		//}
 	}
 
 	if (m_DebugOverlay)
@@ -570,65 +489,6 @@ void CCmpPathfinder_Hier::Init(const std::vector<PathfinderPassability>& passCla
 		m_DebugOverlayLines.clear();
 		AddDebugEdges(m_Pathfinder.GetPassabilityClass("default"));
 	}
-}
-
-/**
- * Find edges between regions in this chunk and the adjacent below/left chunks.
- */
-void CCmpPathfinder_Hier::FindEdges(u8 ci, u8 cj, pass_class_t passClass, Edges& edges)
-{
-	std::vector<Chunk>& chunks = m_Chunks[passClass];
-
-	Chunk& a = chunks.at(cj*m_ChunksW + ci);
-
-	// For each edge between chunks, we loop over every adjacent pair of
-	// navcells in the two chunks. If they are both in valid regions
-	// (i.e. are passable navcells) then add a graph edge between those regions.
-	// (We don't need to test for duplicates since EdgesMap already uses a
-	// std::set which will drop duplicate entries.)
-
-	bool gapped = true;
-	if (ci > 0)
-	{
-		Chunk& b = chunks.at(cj*m_ChunksW + (ci-1));
-		for (int j = 0; j < CHUNK_SIZE; ++j)
-		{
-			RegionID ra = a.Get(0, j);
-			RegionID rb = b.Get(CHUNK_SIZE-1, j);
-			if (ra.r && rb.r)
-			{
-				if (gapped == true)
-				{
-					edges.Put(ci - 1, cj, edges.right, rb.r, ra.r);
-					gapped = false;
-				}
-			}
-			else
-				gapped = true;
-		}
-	}
-
-	gapped = true;
-	if (cj > 0)
-	{
-		Chunk& b = chunks.at((cj-1)*m_ChunksW + ci);
-		for (int i = 0; i < CHUNK_SIZE; ++i)
-		{
-			RegionID ra = a.Get(i, 0);
-			RegionID rb = b.Get(i, CHUNK_SIZE-1);
-			if (ra.r && rb.r)
-			{
-				if (gapped == true)
-				{
-					edges.Put(ci, cj - 1, edges.up, rb.r, ra.r);
-					gapped = false;
-				}
-			}
-			else
-				gapped = true;
-		}
-	}
-
 }
 
 void CCmpPathfinder_Hier::Draw(int i0, int j0, int i1, int j1)
@@ -716,12 +576,8 @@ bool CCmpPathfinder_Hier::MakeGoalReachable(u16 i0, u16 j0, PathGoal& goal, pass
 
 	u16 iGoal, jGoal;
 	m_Pathfinder.NearestNavcell(goal.x, goal.z, iGoal, jGoal);
-	//u32 bestdist2 = ((int)i0 - (int)iGoal) * ((int)i0 - (int)iGoal) + ((int)j0 - (int)jGoal) * ((int)j0 - (int)jGoal);
 
-	// Find everywhere that's reachable
-	std::set<std::pair<u32, RegionID>> reachableRegions;
-
-	if (!FindReachableRegions(source, reachableRegions, passClass, 0, goal, iGoal, jGoal))
+	if (!FindReachableRegions(source, passClass, goal, iGoal, jGoal))
 		return false;
 // 	debug_printf(L"\nReachable from (%d,%d): ", i0, j0);
 // 	for (std::set<RegionID>::iterator it = reachableRegions.begin(); it != reachableRegions.end(); ++it)
@@ -736,8 +592,6 @@ bool CCmpPathfinder_Hier::MakeGoalReachable(u16 i0, u16 j0, PathGoal& goal, pass
 
 	FindNearestReachableNavcell(iGoal, jGoal, r, passClass);
 
-	//FindNearestNavcellInRegions(reachableRegions, iGoal, jGoal, passClass);
-
 	// Construct a new point goal at the nearest reachable navcell
 	PathGoal newGoal;
 	newGoal.type = PathGoal::POINT;
@@ -746,7 +600,6 @@ bool CCmpPathfinder_Hier::MakeGoalReachable(u16 i0, u16 j0, PathGoal& goal, pass
 
 	return true;
 }
-
 
 static bool IsPassable(u16 i, u16 j, ICmpPathfinder::pass_class_t passClass, CCmpPathfinder_Hier* pHier, u16 UNUSED(r))
 {
@@ -869,44 +722,9 @@ void CCmpPathfinder_Hier::FindNearestDesiredNavcell(u16& i, u16& j, u16 r, pass_
 	j = bestj;
 }
 
-void CCmpPathfinder_Hier::FindNearestNavcellInRegions(const std::set<std::pair<u32, RegionID>>& regions, u16& iGoal, u16& jGoal, pass_class_t passClass)
-{
-	// Find the navcell in the given regions that's nearest to the goal navcell:
-	// * For each region, record the (squared) minimal distance to the goal point
-	// * Sort regions by that underestimated distance
-	// * For each region, find the actual nearest navcell
-	// * Stop when the underestimated distances are worse than the best real distance
-
-	int iBest = iGoal;
-	int jBest = jGoal;
-	u32 dist2Best = std::numeric_limits<u32>::max();
-
-	for (std::set<std::pair<u32, RegionID>>::const_iterator it = regions.begin(); it != regions.end() ; ++it)
-	{
-		if ((it->first >= 4 ? ((it->first >> 1) - 1) * ((it->first >> 1) - 1) * CHUNK_SIZE * CHUNK_SIZE * 2 : 0) > dist2Best)
-			break;
-
-		int i, j;
-		u32 dist2;
-		GetChunk(it->second.ci, it->second.cj, passClass).RegionNavcellNearest(it->second.r, iGoal, jGoal, i, j, dist2);
-
-		if (dist2 < dist2Best)
-		{
-			iBest = i;
-			jBest = j;
-			dist2Best = dist2;
-		}
-	}
-	ENSURE(iBest > -1 && jBest > -1);
-	ENSURE(iBest < (int)m_Pathfinder.m_Grid->m_W && jBest < (int)m_Pathfinder.m_Grid->m_H);
-
-	iGoal = iBest;
-	jGoal = jBest;
-}
-
 void FindGoalRegionID(PathGoal const& goal, std::set<u16>& goals, CCmpPathfinder_Hier & hier, const CCmpPathfinder::pass_class_t passClass, const std::vector<u16>& connect)
 {
-	u16 i0, j0, i1, j1;
+	u16 i0(0), j0(0), i1(0), j1(0);
 
 	switch (goal.type)
 	{
@@ -958,7 +776,7 @@ void FindGoalRegionID(PathGoal const& goal, std::set<u16>& goals, CCmpPathfinder
 	}
 }
 
-bool CCmpPathfinder_Hier::FindReachableRegions(RegionID from, std::set<std::pair<u32, RegionID>>& reachable, pass_class_t passClass, u32 bestdist, PathGoal const& goal, u16 iGoal, u16 jGoal)
+bool CCmpPathfinder_Hier::FindReachableRegions(RegionID from, pass_class_t passClass, PathGoal const& goal, u16 iGoal, u16 jGoal)
 {
 	// depth first search the region graph, starting at 'from',
 	// collecting the regions that are reachable via edges until reaching the goal.
@@ -988,115 +806,6 @@ bool CCmpPathfinder_Hier::FindReachableRegions(RegionID from, std::set<std::pair
 
 	//goal is unreachable
 	return true;
-
-	int gci = iGoal / CHUNK_SIZE;
-	int gcj = jGoal / CHUNK_SIZE;
-
-	bestdist = abs(from.ci - gci) + abs(from.cj - gcj);
-	
-	std::vector<std::pair<u32, RegionID>> regionDistEsts; // pair of (manhattan distance, region)
-	regionDistEsts.push_back(std::pair<u32, RegionID>(bestdist, from));
-	reachable.insert(std::pair<u32, RegionID>(bestdist, from));
-
-	RegionID back = from;
-	for (RegionID curr = from; !regionDistEsts.empty(); curr = regionDistEsts.begin()->second)
-	{
-		std::pair<u32, RegionID> region = regionDistEsts.back();
-		regionDistEsts.pop_back();
-
-		bestdist = region.first;
-		int ci = region.second.ci;
-		int cj = region.second.cj;
-		int rootr = region.second.r;
-
-		const Edges::direction seq_right[] = {Edges::right, Edges::up, Edges::down, Edges::left};
-		const Edges::direction seq_up[] = {Edges::up, Edges::left, Edges::right, Edges::down};
-		const Edges::direction seq_left[] = {Edges::left, Edges::down, Edges::up, Edges::right};
-		const Edges::direction seq_down[] = {Edges::down, Edges::right, Edges::left, Edges::up};
-		const Edges::direction* p_seq;
-
-		//determine next chunk
-		if (gci > ci && gcj >= cj)
-			p_seq = seq_right;
-		else if (gci < ci && gcj <= cj)
-			p_seq = seq_left;
-		else if (gcj > cj)
-			p_seq = seq_up;
-		else //if (gcj < cj)
-			p_seq = seq_down;
-
-		for (int cnt = 0; cnt < 4; ++cnt && ++p_seq)
-		{
-			//in case of map-out
-			if (ci == 0 && *p_seq == Edges::left)
-				continue;
-			if (ci >= m_ChunksW - 1 && *p_seq == Edges::right)
-				continue;
-			if (cj == 0 && *p_seq == Edges::down)
-				continue;
-			if (cj >= m_ChunksH - 1 && *p_seq == Edges::up)
-				continue;
-
-			const std::set<std::pair<int, int>>& neighbours = m_Edges[passClass].Get(ci, cj, *p_seq);
-
-			for (std::set<std::pair<int, int>>::const_iterator it = neighbours.begin(); it != neighbours.end(); ++it)
-			{
-				int r, noder;
-				if (*p_seq == Edges::left || *p_seq == Edges::down)
-				{
-					r = it->second;
-					noder = it->first;
-				}
-				else
-				{
-					r = it->first;
-					noder = it->second;
-				}
-
-				if (r != rootr)
-					continue;
-
-				int ni = ci + (*p_seq == Edges::right ? 1 : *p_seq == Edges::left ? -1 : 0);
-				int nj = cj + (*p_seq == Edges::up ? 1 : *p_seq == Edges::down ? -1 : 0);
-
-				if (RegionID(ni, nj, noder) == back) //in case of backtrack
-					continue;
-
-				u32 dist = abs(ni - gci)+abs(nj - gcj);
-				std::pair<u32, RegionID> node(dist, RegionID(ni, nj, noder)); 
-
-				if (dist < bestdist)
-					bestdist = dist;
-
-				bool bl = reachable.insert(node).second;
-
-				// Add to the reachable set; if this is the first time we added
-				// it then also add it to the open list
-				if (bl)
-				{
-					regionDistEsts.push_back(node);
-					if (goals.find(node.second.r) != goals.end()) //goal is reachable
-						return false;
-				}
-			}
-
-		}
-		back = region.second;
-	}
-	return true;
-}
-
-void CCmpPathfinder_Hier::FindPassableRegions(std::set<RegionID>& regions, pass_class_t passClass)
-{
-	// Construct a set of all regions of all chunks for this pass class
-
-	const std::vector<Chunk>& chunks = m_Chunks[passClass];
-	for (size_t c = 0; c < chunks.size(); ++c)
-	{
-		// region 0 is impassable tiles
-		for (int r = 1; r <= chunks[c].m_NumRegions; ++r)
-			regions.insert(RegionID(chunks[c].m_ChunkI, chunks[c].m_ChunkJ, r));
-	}
 }
 
 void CCmpPathfinder::PathfinderHierInit()
