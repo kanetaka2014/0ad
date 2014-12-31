@@ -606,11 +606,15 @@ static bool IsPassable(u16 i, u16 j, ICmpPathfinder::pass_class_t passClass, CCm
 	return IS_PASSABLE(pHier->m_Pathfinder.m_Grid->get(i, j), passClass);
 }
 
-static bool IsReachable(u16 i, u16 j, ICmpPathfinder::pass_class_t passClass, CCmpPathfinder_Hier* pHier, u16 r)
+static size_t MaskToIndex(ICmpPathfinder::pass_class_t passClass)
 {
 	std::bitset<16> bitSeries((passClass & (-passClass)) - 1);
-	const int index = bitSeries.count() - 2;
-	std::vector<u16>& connect = pHier->m_connects[index];
+	return bitSeries.count() - 2;
+}
+
+static bool IsReachable(u16 i, u16 j, ICmpPathfinder::pass_class_t passClass, CCmpPathfinder_Hier* pHier, u16 r)
+{
+	std::vector<u16>& connect = pHier->m_connects[MaskToIndex(passClass)];
 	
 	return connect[r] == connect[pHier->Get(i, j, passClass).r];
 }
@@ -740,6 +744,55 @@ void FindGoalRegionID(PathGoal const& goal, std::set<u16>& goals, CCmpPathfinder
 		return;
 	}
 	case PathGoal::CIRCLE:
+	{
+		hier.m_Pathfinder.NearestNavcell(goal.x + goal.hw, goal.z, i0, j0);
+		int i = i0;
+		int j = j0;
+
+		fixed dx = fixed::FromInt(i) - goal.x;
+		fixed dz = fixed::FromInt(j) - goal.z;
+
+		fixed IsOut = dx.Multiply(dx) + dz.Multiply(dz) - goal.hw.Multiply(goal.hw);
+
+		//int count = 0;
+		bool passable = false;
+		int ci, cj;
+		do
+		{
+			int di = dz > fixed::Zero() ? 1 : -1;
+			int dj = dx < fixed::Zero() ? 1 : -1;
+			if (IsOut * (di * dj) < fixed::Zero())
+			{
+				IsOut += (dz * (2 * dj) + fixed::FromInt(1));
+				j += dj;
+				dz += fixed::FromInt(dj);
+			}
+			else
+			{
+				IsOut += (dx * (2 * di) + fixed::FromInt(1));
+				i += di;
+				dx += fixed::FromInt(di);
+
+			}
+
+			ci = i - (di + 1) / 2;
+			cj = j - (dj + 1) / 2;
+
+			u16 r = hier.Get(ci, cj, passClass).r;
+			if (r != 0 && passable == false)
+			{
+				goals.insert(connect[r]);
+				passable = true;
+			}
+			else
+				passable = false;
+		} while (i != i0 || j != j0);
+
+		//debug_printf(L"count :%d\n", count);
+		//debug_printf(L"set size:%d, radius:%d, count:%d\n", goals.size(), goal.hw.ToInt_RoundToZero(), count);
+		return;
+
+	}
 	case PathGoal::INVERTED_CIRCLE:
 	{
 		hier.m_Pathfinder.NearestNavcell(goal.x - goal.hw, goal.z - goal.hw, i0, j0);
@@ -761,14 +814,21 @@ void FindGoalRegionID(PathGoal const& goal, std::set<u16>& goals, CCmpPathfinder
 	for (u16 i = i0; i <= i1; ++i)
 	{
 		bool hit = false;
+		bool passable = false;
 		for (u16 j = j0; j <= j1; ++j)
 		{
 			if (goal.NavcellContainsGoal(i, j))
 			{
 				hit = true;
-				CCmpPathfinder_Hier::RegionID rid = hier.Get(i, j, passClass);
-				if (rid.r != 0)
-					goals.insert(connect[rid.r]);
+				u16 r = hier.Get(i, j, passClass).r;
+				if (r != 0 && passable == false) //continuous passable cells need not to be stored
+				{
+					goals.insert(connect[r]);
+					passable = true;
+				}
+				else
+					passable = false;
+
 			}
 			else if (hit == true && (goal.type == goal.SQUARE || goal.type == goal.CIRCLE))
 				break;
@@ -785,9 +845,7 @@ bool CCmpPathfinder_Hier::FindReachableRegions(RegionID from, pass_class_t passC
 	TIMER_ACCRUE(tc_FindReachableRegions);
 	ENSURE(from.r != 0);
 
-	std::bitset<16> bitSeries((passClass & (-passClass)) - 1);
-	const int index = bitSeries.count() - 2;
-	const std::vector<u16>& connect = m_connects[index];
+	const std::vector<u16>& connect = m_connects[MaskToIndex(passClass)];
 
 	u16 fr = connect[from.r];
 
