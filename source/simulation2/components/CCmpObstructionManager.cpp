@@ -744,134 +744,139 @@ void CCmpObstructionManager::Rasterize(Grid<u16>& grid, entity_pos_t expand, ICm
 			CFixedVector2D uw(shape.u.Multiply(shape.hw + expand));
 			CFixedVector2D vh(shape.v.Multiply(shape.hh + expand));
 
+			CFixedVector2D u(shape.u.Multiply(shape.hw));
+			CFixedVector2D v(shape.v.Multiply(shape.hh));
+
 			if (uw.Y < fixed::Zero() && uw.X < fixed::Zero())
 			{
 				uw = -uw;
 				vh = -vh;
+				u = -u;
+				v = -v;
 			}
 			else if (uw.Y < fixed::Zero())
 			{
 				std::swap(uw, vh);
 				vh = -vh;
+				std::swap(u, v);
+				v = -v;
 			}
 			else if (uw.X < fixed::Zero())
 			{
 				std::swap(uw, vh);
 				uw = -uw;
+				std::swap(u, v);
+				u = -u;
 			}
 
-			//P1 needs to have max z value, and P2 needs to have max x value, P3 needs to have min z value, and P4 needs to have min x value.
-			CFixedVector2D P1(CFixedVector2D(shape.x, shape.z) + uw + vh);
-			CFixedVector2D P2(CFixedVector2D(shape.x, shape.z) + uw - vh);
-			CFixedVector2D P3(CFixedVector2D(shape.x, shape.z) - uw - vh);
-			CFixedVector2D P4(CFixedVector2D(shape.x, shape.z) - uw + vh);
+			const CFixedVector2D center(shape.x, shape.z);
+			const CFixedVector2D halfsize(shape.hw, shape.hh);
 
-			u16 i, j, i1, i2, i3, i4, j1, j2, j3, j4;
+			CFixedVector2D P[4] = {
+				center + uw + vh,	//north
+				center + uw - vh,	//east
+				center - uw - vh,	//south
+				center - uw + vh	//west
+			};
 
-			NearestNavcell(P1.X, P1.Y, i1, j1, grid.m_W, grid.m_H);
-			NearestNavcell(P2.X, P2.Y, i2, j2, grid.m_W, grid.m_H);
-			NearestNavcell(P3.X, P3.Y, i3, j3, grid.m_W, grid.m_H);
-			NearestNavcell(P4.X, P4.Y, i4, j4, grid.m_W, grid.m_H);
-			i = i1;
-			j = j1;
+			CFixedVector2D PnoExpand[4] = {
+				center + u + v,
+				center + u - v,
+				center - u - v,
+				center - u + v
+			};
+			const fixed cellSize = ICmpObstructionManager::NAVCELL_SIZE;
 
-			ENSURE(j1 > j3);
+			u16 i, j;
+			u16 pi[4], pj[4];
+
+			NearestNavcell(PnoExpand[0].X, PnoExpand[0].Y + expand, pi[0], pj[0], grid.m_W, grid.m_H);
+			NearestNavcell(PnoExpand[1].X + expand, PnoExpand[1].Y, pi[1], pj[1], grid.m_W, grid.m_H);
+			NearestNavcell(PnoExpand[2].X, PnoExpand[2].Y - expand, pi[2], pj[2], grid.m_W, grid.m_H);
+			NearestNavcell(PnoExpand[3].X - expand, PnoExpand[3].Y, pi[3], pj[3], grid.m_W, grid.m_H);
+			i = pi[0];
+			j = pj[0];
+			ASSERT(pj[0] > pj[2]);
+			ASSERT(pi[1] > pi[3]);
 			
 			//axis aligned square
 			if (shape.u.X == fixed::Zero() || shape.u.Y == fixed::Zero()  || shape.v.X == fixed::Zero() || shape.v.Y == fixed::Zero())
 			{
-				for (--j; j > j2; --j)
+				for (--j; j > pj[1]; --j)
 				{
-					for (--i; i > i3; --i)
+					for (--i; i > pi[2]; --i)
 						grid.set(i, j, grid.get(i, j) | setMask);
 				}
 				continue;
 			}
 
 			//no axis-aligned square
-			std::vector<int> ibegin(j1 - j3 + 1);
-			std::vector<int> iend(j1 - j3 + 1);
+			std::vector<int> ibegin(pj[0] - pj[2] + 1);
+			std::vector<int> iend(pj[0] - pj[2] + 1);
 
-			fixed dx = P2.X - P1.X;
-			fixed dy = P2.Y - P1.Y;
+			fixed dx;
+			fixed dy;
 
-			// isOutside equals the cross product of vector(P1P2) X vector(P1p), p(i,j)
-			// isOutside < 0: inside the shape, isOutside == 0: on line, isOutside > 0: outside the shape.
-			fixed isOutside(dx.Multiply(fixed::FromInt(j)-P1.Y) - dy.Multiply(fixed::FromInt(i)-P1.X)); 
+			++i;			
 
-			while (j > j2)
+			for (int dir = 0; dir <= 1; ++dir)
 			{
-				while (isOutside < fixed::Zero())
+				dx = P[dir + 1].X - P[dir].X;
+				dy = P[dir + 1].Y - P[dir].Y;
+
+				int di = (dx > fixed::Zero() ? 1 : -1);
+				while (j > pj[dir + 1])
 				{
-					isOutside = isOutside - dy;
-					++i;
+					while (dir == 0 ? Geometry::DistanceToSquare(
+						CFixedVector2D(cellSize * i, cellSize * j) - center,
+						shape.u, shape.v, halfsize, true) <= expand
+						: Geometry::DistanceToSquare(
+						CFixedVector2D(cellSize * i, cellSize * j) - center,
+						shape.u, shape.v, halfsize, true) > expand && i >= pi[2])
+					{
+						i += di;
+					}
+
+					if (0 == iend[j - (1 - dir) - pj[2]])
+						iend[j - (1 - dir) - pj[2]] = std::min(i - (1 - dir), grid.m_W + 0);
+					else
+						iend[j - (1 - dir) - pj[2]] = std::min(i - (1 - dir), iend[j - (1 - dir) - pj[2]]);
+
+					--j;
 				}
-				iend[j - 1 - j3] = std::min(i - 1, (int)grid.m_W);
-
-				isOutside = isOutside - dx;
-				--j;
-
+				i = pi[1];
 			}
 
-			//j = j2;
-			i = i2;
-			dx = P3.X - P2.X;
-			dy = P3.Y - P2.Y;
-			isOutside = fixed(dx.Multiply(fixed::FromInt(j)-P2.Y) - dy.Multiply(fixed::FromInt(i)-P2.X));
-			while (j > j3)
+			for (int dir = 2; dir <= 3; ++dir)
 			{
-				while (isOutside > fixed::Zero())
-				{
-					isOutside = isOutside + dy;
-					--i;
-				}
-				iend[j - j3] = std::min(i+0, j == j2 ? iend[j - j3] : (int)grid.m_W);
+				i = pi[dir];
+				int ndir = (dir + 1) % 4;
+				dx = P[ndir].X - P[dir].X;
+				dy = P[ndir].Y - P[dir].Y;
 
-				isOutside = isOutside - dx;
-				--j;
+				int di = (dx > fixed::Zero() ? 1 : -1);
+				while (j <= pj[ndir])
+				{
+					while (dir == 2 ? Geometry::DistanceToSquare(
+						CFixedVector2D(cellSize * i, cellSize * j) - center,
+						shape.u, shape.v, halfsize, true) <= expand
+						: Geometry::DistanceToSquare(
+						CFixedVector2D(cellSize * i, cellSize * j) - center,
+						shape.u, shape.v, halfsize, true) > expand && i <= pi[0])
+					{
+						i += di;
+					}
+					ibegin[j - (dir - 2) - pj[2]] = std::max(i + 1 - (dir - 2), ibegin[j - (dir - 2) - pj[2]]);
+					++j;
+				}
 			}
 
-			//j = j3;
-			i = i3;
-			dx = P4.X - P3.X;
-			dy = P4.Y - P3.Y;
-			isOutside = fixed(dx.Multiply(fixed::FromInt(j)-P3.Y) - dy.Multiply(fixed::FromInt(i)-P3.X));
-			while (j <= j4)
+			for (j = pj[0] - 1; j > pj[2]; --j)
 			{
-				while (isOutside < fixed::Zero())
-				{
-					isOutside = isOutside + dy;
-					--i;
-				}
-				ibegin[j - j3] = std::max(i + 1, 0);
-
-				isOutside = isOutside + dx;
-				++j;
-			}
-
-			i = i4;
-			dx = P1.X - P4.X;
-			dy = P1.Y - P4.Y;
-			isOutside = fixed(dx.Multiply(fixed::FromInt(j)-P4.Y) - dy.Multiply(fixed::FromInt(i)-P4.X));
-			while (j <= j1)
-			{
-				while (isOutside > fixed::Zero())
-				{
-					isOutside = isOutside - dy;
-					++i;
-				}
-				ibegin[j - 1 - j3] = std::max(i+0, j == j4 + 1 ? ibegin[j - 1 - j3] : 0) ;
-
-				isOutside = isOutside + dx;
-				++j;
-			}
-
-			for (j = j1; j > j3; --j)
-			{
-				if (ibegin[j - j3] >= iend[j - j3])
+				if (ibegin[j - pj[2]] >= iend[j - pj[2]])
 					continue;
 
-				for (i = ibegin[j - j3]; i < iend[j - j3]; ++i)
+				for (i = ibegin[j - pj[2]]; i < iend[j - pj[2]]; ++i)
 					grid.set(i, j, grid.get(i, j) | setMask);
 			}
 
@@ -888,14 +893,14 @@ void CCmpObstructionManager::Rasterize(Grid<u16>& grid, entity_pos_t expand, ICm
 					i16 ii0 = std::max(spans[k].i0, (i16)0);
 					i16 ii1 = std::min(spans[k].i1, (i16)grid.m_W);
 
-					if (!(ii0 == ibegin[j - j3] && ii1 == iend[j - j3]))
+					if (!(ii0 == ibegin[j - pj[2]] && ii1 == iend[j - pj[2]]))
 					{
-						debug_printf(L"P1:%d,%d P2:%d,%d P3:%d,%d P4:%d,%d\n", i1, j1, i2, j2, i3, j3, i4, j4);
+						debug_printf(L"P1:%d,%d P2:%d,%d P3:%d,%d P4:%d,%d\n", pi[0], pj[0], pi[1], pj[1], pi[2], pj[2], pi[3], pj[3]);
 
 						const fixed cellSize(ICmpObstructionManager::NAVCELL_SIZE);
 						fixed clearance(expand);
 
-						debug_printf(L"ibegin[%d  - j3], ii0, ii1, iend[%d - j3]: %d %d %d %d\n", j, j, ibegin[j - j3], ii0, ii1, iend[j - j3]);
+						debug_printf(L"ibegin[%d  - j3], ii0, ii1, iend[%d - j3]: %d %d %d %d\n", j, j, ibegin[j - pj[2]], ii0, ii1, iend[j - pj[2]]);
 					}
 				}
 			}
