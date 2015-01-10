@@ -741,6 +741,147 @@ void CCmpObstructionManager::Rasterize(Grid<u16>& grid, entity_pos_t expand, ICm
 		const StaticShape& shape = it->second;
 		if (shape.flags & requireMask)
 		{
+			CFixedVector2D uw(shape.u.Multiply(shape.hw + expand));
+			CFixedVector2D vh(shape.v.Multiply(shape.hh + expand));
+
+			CFixedVector2D u(shape.u.Multiply(shape.hw));
+			CFixedVector2D v(shape.v.Multiply(shape.hh));
+
+			if (uw.Y < fixed::Zero() && uw.X < fixed::Zero())
+			{
+				uw = -uw;
+				vh = -vh;
+				u = -u;
+				v = -v;
+			}
+			else if (uw.Y < fixed::Zero())
+			{
+				std::swap(uw, vh);
+				vh = -vh;
+				std::swap(u, v);
+				v = -v;
+			}
+			else if (uw.X < fixed::Zero())
+			{
+				std::swap(uw, vh);
+				uw = -uw;
+				std::swap(u, v);
+				u = -u;
+			}
+
+			const CFixedVector2D center(shape.x, shape.z);
+			const CFixedVector2D halfsize(shape.hw, shape.hh);
+
+			CFixedVector2D P[4] = {
+				center + uw + vh,	//north
+				center + uw - vh,	//east
+				center - uw - vh,	//south
+				center - uw + vh	//west
+			};
+
+			CFixedVector2D PnoExpand[4] = {
+				center + u + v,
+				center + u - v,
+				center - u - v,
+				center - u + v
+			};
+			const fixed cellSize = ICmpObstructionManager::NAVCELL_SIZE;
+
+			u16 i, j;
+			u16 pi[4], pj[4];
+
+			NearestNavcell(PnoExpand[0].X, PnoExpand[0].Y + expand, pi[0], pj[0], grid.m_W, grid.m_H);
+			NearestNavcell(PnoExpand[1].X + expand, PnoExpand[1].Y, pi[1], pj[1], grid.m_W, grid.m_H);
+			NearestNavcell(PnoExpand[2].X, PnoExpand[2].Y - expand, pi[2], pj[2], grid.m_W, grid.m_H);
+			NearestNavcell(PnoExpand[3].X - expand, PnoExpand[3].Y, pi[3], pj[3], grid.m_W, grid.m_H);
+			i = pi[0];
+			j = pj[0];
+			ASSERT(pj[0] > pj[2]);
+			ASSERT(pi[1] > pi[3]);
+			
+			//axis aligned square
+			if (shape.u.X == fixed::Zero() || shape.u.Y == fixed::Zero()  || shape.v.X == fixed::Zero() || shape.v.Y == fixed::Zero())
+			{
+				for (--j; j > pj[1]; --j)
+				{
+					for (--i; i > pi[2]; --i)
+						grid.set(i, j, grid.get(i, j) | setMask);
+				}
+				continue;
+			}
+
+			//no axis-aligned square
+			std::vector<int> ibegin(pj[0] - pj[2] + 1);
+			std::vector<int> iend(pj[0] - pj[2] + 1);
+
+			fixed dx;
+			fixed dy;
+
+			++i;			
+
+			for (int dir = 0; dir <= 1; ++dir)
+			{
+				dx = P[dir + 1].X - P[dir].X;
+				dy = P[dir + 1].Y - P[dir].Y;
+
+				int di = (dx > fixed::Zero() ? 1 : -1);
+				while (j > pj[dir + 1])
+				{
+					while (dir == 0 ? Geometry::DistanceToSquare(
+						CFixedVector2D(cellSize * i, cellSize * j) - center,
+						shape.u, shape.v, halfsize, true) <= expand
+						: Geometry::DistanceToSquare(
+						CFixedVector2D(cellSize * i, cellSize * j) - center,
+						shape.u, shape.v, halfsize, true) > expand && i >= pi[2])
+					{
+						i += di;
+					}
+
+					if (0 == iend[j - (1 - dir) - pj[2]])
+						iend[j - (1 - dir) - pj[2]] = std::min(i - (1 - dir), grid.m_W + 0);
+					else
+						iend[j - (1 - dir) - pj[2]] = std::min(i - (1 - dir), iend[j - (1 - dir) - pj[2]]);
+
+					--j;
+				}
+				i = pi[1];
+			}
+
+			for (int dir = 2; dir <= 3; ++dir)
+			{
+				i = pi[dir];
+				int ndir = (dir + 1) % 4;
+				dx = P[ndir].X - P[dir].X;
+				dy = P[ndir].Y - P[dir].Y;
+
+				int di = (dx > fixed::Zero() ? 1 : -1);
+				while (j <= pj[ndir])
+				{
+					while (dir == 2 ? Geometry::DistanceToSquare(
+						CFixedVector2D(cellSize * i, cellSize * j) - center,
+						shape.u, shape.v, halfsize, true) <= expand
+						: Geometry::DistanceToSquare(
+						CFixedVector2D(cellSize * i, cellSize * j) - center,
+						shape.u, shape.v, halfsize, true) > expand && i <= pi[0])
+					{
+						i += di;
+					}
+					ibegin[j - (dir - 2) - pj[2]] = std::max(i + 1 - (dir - 2), ibegin[j - (dir - 2) - pj[2]]);
+					++j;
+				}
+			}
+
+			for (j = pj[0] - 1; j > pj[2]; --j)
+			{
+				if (ibegin[j - pj[2]] >= iend[j - pj[2]])
+					continue;
+
+				for (i = ibegin[j - pj[2]]; i < iend[j - pj[2]]; ++i)
+					grid.set(i, j, grid.get(i, j) | setMask);
+			}
+
+#if DEBUG
+			//for test, comare result of previous code.
 			ObstructionSquare square = { shape.x, shape.z, shape.u, shape.v, shape.hw, shape.hh };
 			SimRasterize::Spans spans;
 			SimRasterize::RasterizeRectWithClearance(spans, square, expand, ICmpObstructionManager::NAVCELL_SIZE);
@@ -749,12 +890,21 @@ void CCmpObstructionManager::Rasterize(Grid<u16>& grid, entity_pos_t expand, ICm
 				i16 j = spans[k].j;
 				if (j >= 0 && j <= grid.m_H)
 				{
-					i16 i0 = std::max(spans[k].i0, (i16)0);
-					i16 i1 = std::min(spans[k].i1, (i16)grid.m_W);
-					for (i16 i = i0; i < i1; ++i)
-						grid.set(i, j, grid.get(i, j) | setMask);
+					i16 ii0 = std::max(spans[k].i0, (i16)0);
+					i16 ii1 = std::min(spans[k].i1, (i16)grid.m_W);
+
+					if (!(ii0 == ibegin[j - pj[2]] && ii1 == iend[j - pj[2]]))
+					{
+						debug_printf(L"P1:%d,%d P2:%d,%d P3:%d,%d P4:%d,%d\n", pi[0], pj[0], pi[1], pj[1], pi[2], pj[2], pi[3], pj[3]);
+
+						const fixed cellSize(ICmpObstructionManager::NAVCELL_SIZE);
+						fixed clearance(expand);
+
+						debug_printf(L"ibegin[%d  - j3], ii0, ii1, iend[%d - j3]: %d %d %d %d\n", j, j, ibegin[j - pj[2]], ii0, ii1, iend[j - pj[2]]);
+					}
 				}
 			}
+#endif
 		}
 	}
 
