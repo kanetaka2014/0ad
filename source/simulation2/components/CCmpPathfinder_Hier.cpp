@@ -635,6 +635,9 @@ void CCmpPathfinder_Hier::FindNearestReachableNavcell(u16& i, u16& j, u16 r, pas
 void CCmpPathfinder_Hier::FindNearestDesiredNavcell(u16& i, u16& j, u16 r, pass_class_t passClass, bool (*pCond)(u16, u16, ICmpPathfinder::pass_class_t, CCmpPathfinder_Hier*, u16))
 // Spiral search passable cell from (i, j)
 {
+	const u16 Width = m_Pathfinder.m_Grid->m_W;
+	const u16 Height = m_Pathfinder.m_Grid->m_H;
+
 	int i0 = i;
 	int j0 = j;
 
@@ -651,7 +654,7 @@ void CCmpPathfinder_Hier::FindNearestDesiredNavcell(u16& i, u16& j, u16 r, pass_
 	int ni = i0 + x;
 	int nj = j0 + y;
 
-	u32 bestdist2 = m_Pathfinder.m_Grid->m_W * m_Pathfinder.m_Grid->m_W + m_Pathfinder.m_Grid->m_H * m_Pathfinder.m_Grid->m_H;
+	u32 bestdist2 = Width * Width + Height * Height;
 	int besti = -1;
 	int bestj = -1;
 
@@ -661,7 +664,7 @@ void CCmpPathfinder_Hier::FindNearestDesiredNavcell(u16& i, u16& j, u16 r, pass_
 		{
 			if (cj == nj)
 			{
-				if (cj < 0 || (int)m_Pathfinder.m_Grid->m_H <= cj)
+				if (cj < 0 || (int)Height <= cj)
 				{
 					ci = ni;
 					continue;
@@ -670,7 +673,7 @@ void CCmpPathfinder_Hier::FindNearestDesiredNavcell(u16& i, u16& j, u16 r, pass_
 				ci += ni > ci ? 1 : -1;
 				//map out so skip to the corner
 				if ((ci < 0 && ni < ci) ||
-					(ci >= (int)m_Pathfinder.m_Grid->m_W && ci < ni))
+					(ci >= (int)Width && ci < ni))
 				{
 					ci = ni;
 					continue;
@@ -678,7 +681,7 @@ void CCmpPathfinder_Hier::FindNearestDesiredNavcell(u16& i, u16& j, u16 r, pass_
 			}
 			else
 			{
-				if (ci < 0 || (int)m_Pathfinder.m_Grid->m_W <= ci)
+				if (ci < 0 || (int)Width <= ci)
 				{
 					cj = nj;
 					continue;
@@ -686,7 +689,7 @@ void CCmpPathfinder_Hier::FindNearestDesiredNavcell(u16& i, u16& j, u16 r, pass_
 				cj += nj > cj ? 1 : -1;
 				//map out so skip to the corner
 				if ((cj < 0 && nj < cj) ||
-					(cj >= (int)m_Pathfinder.m_Grid->m_H && cj < nj))
+					(cj >= (int)Height && cj < nj))
 				{
 					cj = nj;
 					continue;
@@ -716,11 +719,11 @@ void CCmpPathfinder_Hier::FindNearestDesiredNavcell(u16& i, u16& j, u16 r, pass_
 		ni += x;
 		nj += y;
 
-		if (abs(x) > (int)m_Pathfinder.m_Grid->m_W || abs(y) > (int)m_Pathfinder.m_Grid->m_H)
+		if (abs(x) > (int)Width || abs(y) > (int)Height)
 			break;
 	}
 	ENSURE(besti > -1 && bestj > -1);
-	ENSURE(besti < (int)m_Pathfinder.m_Grid->m_W && bestj < (int)m_Pathfinder.m_Grid->m_H);
+	ENSURE(besti < (int)Width && bestj < (int)Height);
 	i = besti;
 	j = bestj;
 }
