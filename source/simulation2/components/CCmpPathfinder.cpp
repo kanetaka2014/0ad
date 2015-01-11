@@ -516,6 +516,7 @@ void CCmpPathfinder::UpdateGrid()
 
 		// Obstructions or terrain changed - we need to recompute passability
 		// TODO: only bother recomputing the region that has actually changed
+		int i0, i1, j0, j1;
 
 		// If the terrain has changed, recompute entirely m_Grid
 		// Else, use data from m_BaseGrid and add obstructions
@@ -557,6 +558,8 @@ void CCmpPathfinder::UpdateGrid()
 				}
 			}
 
+			int max = 0; // for update range margin
+
 			// Expand the impassability grid, for any class with non-zero clearance,
 			// so that we can stop units getting too close to impassable navcells
 			for (size_t n = 0; n < m_PassClasses.size(); ++n)
@@ -567,17 +570,40 @@ void CCmpPathfinder::UpdateGrid()
 					// only bother doing this once for them all
 					int clearance = (m_PassClasses[n].m_Clearance / ICmpObstructionManager::NAVCELL_SIZE).ToInt_RoundToInfinity();
 					if (clearance > 0)
+					{
 						ExpandImpassableCells(*m_Grid, clearance, m_PassClasses[n].m_Mask);
+						if (clearance > max)
+							max = clearance;
+					}
 				}
 			}
+			cmpObstructionManager->SetMaxClearance(max);
 
 			// Store the updated terrain-only grid
 			*m_BaseGrid = *m_Grid;
-		}
+		}	
 		else
 		{
-			ENSURE(m_Grid->m_W == m_BaseGrid->m_W && m_Grid->m_H == m_BaseGrid->m_H);
-			memcpy(m_Grid->m_Data, m_BaseGrid->m_Data, (m_Grid->m_W)*(m_Grid->m_H)*sizeof(NavcellData));
+			if (obstructionsDirty)
+			{
+				int clr = cmpObstructionManager->GetMaxClearance();
+				cmpObstructionManager->GetDirtyRange(*m_Grid, i0, j0, i1, j1);
+				debug_printf(L"update percetage:%f\n", (i1 - i0) * (j1 - j0) * 100.0 / (m_Grid->m_W * m_Grid->m_H));
+			}
+
+			if (i0 == 0 && j0 == 0 && i1 == m_Grid->m_W && j1 == m_Grid->m_H)
+			{
+				ENSURE(m_Grid->m_W == m_BaseGrid->m_W && m_Grid->m_H == m_BaseGrid->m_H);
+				memcpy(m_Grid->m_Data, m_BaseGrid->m_Data, m_Grid->m_W * m_Grid->m_H * sizeof(NavcellData));
+			}
+			else
+			{
+				for (int i = i0; i < i1; ++i)
+ 				{
+ 					for (int j = j0; j < j1; ++j)
+ 						m_Grid->set(i, j, m_BaseGrid->get(i, j));
+ 				}
+ 			}
 		}
 
 		// Add obstructions onto the grid, for any class with (possibly zero) clearance
@@ -588,6 +614,7 @@ void CCmpPathfinder::UpdateGrid()
 			if (m_PassClasses[n].m_HasClearance)
 				cmpObstructionManager->Rasterize(*m_Grid, m_PassClasses[n].m_Clearance, ICmpObstructionManager::FLAG_BLOCK_PATHFINDING, m_PassClasses[n].m_Mask);
 		}
+		cmpObstructionManager->ObstructionDirtyReset(i0, j0, i1, j1);
 
 		m_TerrainDirty = false;
 
