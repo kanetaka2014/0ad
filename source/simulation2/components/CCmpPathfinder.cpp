@@ -35,6 +35,18 @@
 #include "simulation2/components/ICmpWaterManager.h"
 #include "simulation2/serialization/SerializeTemplates.h"
 
+#define PATHFIND_PROFILE 1
+#if PATHFIND_PROFILE
+#include "lib/timer.h"
+TIMER_ADD_CLIENT(tc_ProcessLongRequests);
+TIMER_ADD_CLIENT(tc_ProcessShortRequests);
+TIMER_ADD_CLIENT(tc_ProcessLongRequests_Loop);
+TIMER_ADD_CLIENT(tc_UpdateGrid);
+#else
+#undef TIMER_ACCRUE
+#define	TIMER_ACCRUE(a) ;
+#endif
+
 // Default cost to move a single tile is a fairly arbitrary number, which should be big
 // enough to be precise when multiplied/divided and small enough to never overflow when
 // summing the cost of a whole path.
@@ -308,6 +320,7 @@ const Grid<u16>& CCmpPathfinder::GetPassabilityGrid()
 
 void CCmpPathfinder::UpdateGrid()
 {
+	TIMER_ACCRUE(tc_UpdateGrid);
 	CmpPtr<ICmpTerrain> cmpTerrain(GetSystemEntity());
 	if (!cmpTerrain)
 		return; // error
@@ -573,8 +586,10 @@ void CCmpPathfinder::FinishAsyncRequests()
 
 void CCmpPathfinder::ProcessLongRequests(const std::vector<AsyncLongPathRequest>& longRequests)
 {
+	TIMER_ACCRUE(tc_ProcessLongRequests);
 	for (size_t i = 0; i < longRequests.size(); ++i)
 	{
+		TIMER_ACCRUE(tc_ProcessLongRequests_Loop);
 		const AsyncLongPathRequest& req = longRequests[i];
 		Path path;
 		ComputePath(req.x0, req.z0, req.goal, req.passClass, req.costClass, path);
@@ -585,6 +600,7 @@ void CCmpPathfinder::ProcessLongRequests(const std::vector<AsyncLongPathRequest>
 
 void CCmpPathfinder::ProcessShortRequests(const std::vector<AsyncShortPathRequest>& shortRequests)
 {
+	TIMER_ACCRUE(tc_ProcessShortRequests);
 	for (size_t i = 0; i < shortRequests.size(); ++i)
 	{
 		const AsyncShortPathRequest& req = shortRequests[i];
